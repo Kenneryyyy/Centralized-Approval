@@ -1,0 +1,1041 @@
+<style>
+  /* ==========================================================================
+     DESIGN TOKENS
+  ========================================================================== */
+  :root {
+    --bg: #f7f7f8;
+    --surface: #ffffff;
+    --surface-raised: #ffffff;
+    --border: #e7e7ea;
+    --border-strong: #d8d8dd;
+
+    --text-primary: #16161a;
+    --text-secondary: #6b6b74;
+    --text-tertiary: #9a9aa2;
+
+    --accent: #3358f4;
+    --accent-soft: rgba(51, 88, 244, 0.08);
+    --accent-soft-strong: rgba(51, 88, 244, 0.14);
+
+    --green: #1fae64;
+    --green-soft: rgba(31, 174, 100, 0.1);
+    --red: #e0393e;
+    --red-soft: rgba(224, 57, 62, 0.1);
+    --orange: #d97706;
+    --orange-soft: rgba(217, 119, 6, 0.1);
+
+    --hover: rgba(22, 22, 26, 0.035);
+    --shadow-sm: 0 1px 2px rgba(16, 16, 20, 0.04);
+    --shadow-md: 0 4px 16px rgba(16, 16, 20, 0.06);
+    --shadow-lg: 0 12px 32px rgba(16, 16, 20, 0.10);
+
+    --radius-lg: 16px;
+    --radius-md: 12px;
+    --radius-sm: 8px;
+
+    /* CHANGED (6. UI Polish & Font Sizing): base sizing tokens bumped
+       +1px so headers/card titles/body text read a little larger across
+       the whole app. Single source of truth for Request ID / Title sizing
+       on the sidebar list cards. */
+    --id-title-size: 16px;
+
+    /* The detail view header gets its own, larger tokens — it's the primary
+       reading focus of the panel and deserves more visual weight than the
+       compact list cards. CHANGED (6.): +2px / +1px. */
+    --detail-title-size: 25px;
+    --detail-id-size: 17px;
+
+    /* Max height for the scrollable DetailsJSON key/value region — keeps
+       the "Request Details" card the same height as "Requester Profile"
+       regardless of how many keys a given payload has. */
+    --details-kv-max-height: 190px;
+
+    --ease: cubic-bezier(0.4, 0, 0.2, 1);
+    --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+
+  [data-theme="dark"] {
+    --bg: #0c0c0e;
+    --surface: #131316;
+    --surface-raised: #17171b;
+    --border: rgba(255, 255, 255, 0.08);
+    --border-strong: rgba(255, 255, 255, 0.14);
+
+    --text-primary: #f4f4f6;
+    --text-secondary: #9d9da5;
+    --text-tertiary: #6d6d75;
+
+    --accent: #6a86ff;
+    --accent-soft: rgba(106, 134, 255, 0.14);
+    --accent-soft-strong: rgba(106, 134, 255, 0.22);
+
+    --green: #33c37c;
+    --green-soft: rgba(51, 195, 124, 0.14);
+    --red: #ff5c60;
+    --red-soft: rgba(255, 92, 96, 0.14);
+    --orange: #f0a63a;
+    --orange-soft: rgba(240, 166, 58, 0.14);
+
+    --hover: rgba(255, 255, 255, 0.05);
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+    --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.4);
+    --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.5);
+  }
+
+  /* ==========================================================================
+     BASE
+  ========================================================================== */
+  * { box-sizing: border-box; }
+
+  html, body {
+    height: 100%;
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI", Roboto, sans-serif;
+    color: var(--text-primary);
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+  }
+
+  body {
+    background: var(--bg);
+    transition: background 0.3s var(--ease), color 0.3s var(--ease);
+  }
+
+  .hidden { display: none !important; }
+  button { font-family: inherit; cursor: pointer; }
+
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 8px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--text-tertiary); }
+
+  /* Signature element: a quiet 2px gradient hairline at the very top of the
+     viewport — the one spot of color in an otherwise neutral, flat page. */
+  body::before {
+    content: '';
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, #3358f4, #8b5cf6, #06b6d4);
+    z-index: 60;
+  }
+
+  /* ==========================================================================
+     SURFACE (flat card, replaces old glass panel everywhere)
+  ========================================================================== */
+  .auth-card, .topbar, .sidebar, .detail-view, .popover {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow-sm);
+    border-radius: var(--radius-lg);
+  }
+
+  /* ==========================================================================
+     AUTH GATE
+  ========================================================================== */
+  .auth-gate {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg);
+  }
+  .auth-card {
+    padding: 40px 44px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+    min-width: 300px;
+    box-shadow: var(--shadow-lg);
+  }
+  .auth-mark {
+    width: 40px; height: 40px;
+    border-radius: 11px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    display: flex; align-items: center; justify-content: center;
+    margin-bottom: 4px;
+  }
+  .auth-mark svg { width: 22px; height: 22px; }
+  .auth-spinner {
+    width: 24px; height: 24px;
+    border-radius: 50%;
+    border: 2.5px solid var(--border-strong);
+    border-top-color: var(--accent);
+    animation: spin 0.8s linear infinite;
+  }
+  .auth-status-text {
+    margin: 0;
+    font-size: 15px;
+    color: var(--text-secondary);
+    text-align: center;
+    line-height: 1.5;
+  }
+  .auth-status-text.error { color: var(--red); font-weight: 600; }
+  .auth-status-text.muted { color: var(--text-tertiary); }
+
+  .auth-signin-wrap { margin-top: 6px; display: flex; flex-direction: column; align-items: center; width: 100%; }
+  #auth-signin-btn { min-height: 40px; }
+
+  .auth-retry-btn {
+    display: flex; align-items: center; justify-content: center;
+    padding: 11px 28px; border-radius: 999px; border: none;
+    background: var(--accent); color: #fff;
+    font-size: 14px; font-weight: 700;
+    transition: filter 0.15s var(--ease), transform 0.1s var(--ease);
+    width: 100%;
+  }
+  .auth-retry-btn:hover { filter: brightness(1.08); }
+  .auth-retry-btn:active { transform: scale(0.98); }
+
+  .auth-alt-wrap {
+    margin-top: 16px; padding-top: 16px;
+    border-top: 1px solid var(--border);
+    display: flex; flex-direction: column; align-items: center; gap: 10px;
+    width: 100%;
+  }
+  .auth-alt-label { margin: 0; font-size: 12.5px; color: var(--text-tertiary); text-align: center; }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ==========================================================================
+     APP SHELL / LAYOUT
+  ========================================================================== */
+  .app-shell {
+    position: relative;
+    /* 100vh doesn't subtract mobile browser chrome (address bar / bottom
+       toolbar); 100dvh (dynamic viewport height) accounts for that; vh
+       stays as the fallback for older browsers that don't support dvh. */
+    height: 100vh;
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    padding: 12px;
+    gap: 12px;
+    opacity: 0;
+    animation: fadeIn 0.35s var(--ease) forwards;
+  }
+  @keyframes fadeIn { to { opacity: 1; } }
+
+  /* ==========================================================================
+     HOVER NAV SIDEBAR (5.) — collapsed to a thin edge rail; hovering (or
+     tapping the rail on touch devices — see bindHoverNav() in
+     JavaScript.html, which toggles the same `.expanded` class this CSS
+     already responds to) reveals a panel of external quick links plus a
+     dedicated Log Out option.
+  ========================================================================== */
+  .hover-nav {
+    position: fixed;
+    top: 0; left: 0; bottom: 0;
+    z-index: 80;
+    display: flex;
+    pointer-events: none;
+  }
+  .hover-nav-rail {
+    width: 12px;
+    height: 100%;
+    pointer-events: auto;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .hover-nav-dot {
+    width: 4px; height: 42px;
+    border-radius: 4px;
+    background: var(--border-strong);
+    transition: background 0.2s var(--ease), height 0.2s var(--ease);
+  }
+  .hover-nav:hover .hover-nav-dot,
+  .hover-nav.expanded .hover-nav-dot {
+    background: var(--accent);
+    height: 60px;
+  }
+
+  .hover-nav-panel {
+    width: 0;
+    overflow: hidden;
+    pointer-events: none;
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    box-shadow: var(--shadow-lg);
+    display: flex;
+    flex-direction: column;
+    padding: 0;
+    transition: width 0.22s var(--ease), padding 0.22s var(--ease);
+    height: 100%;
+  }
+  .hover-nav:hover .hover-nav-panel,
+  .hover-nav.expanded .hover-nav-panel {
+    width: 230px;
+    padding: 20px 14px;
+    pointer-events: auto;
+  }
+  .hover-nav-title {
+    font-size: 11.5px; font-weight: 750; text-transform: uppercase; letter-spacing: 0.05em;
+    color: var(--text-tertiary); margin-bottom: 10px; white-space: nowrap;
+  }
+  .hover-nav-links { display: flex; flex-direction: column; gap: 2px; }
+  .hover-nav-loading { font-size: 12.5px; color: var(--text-tertiary); padding: 6px 8px; white-space: nowrap; }
+  .hover-nav-link {
+    display: flex; align-items: center; gap: 9px;
+    padding: 9px 8px; border-radius: var(--radius-sm);
+    font-size: 13.5px; font-weight: 600; color: var(--text-secondary);
+    text-decoration: none; white-space: nowrap;
+    transition: background 0.14s var(--ease), color 0.14s var(--ease);
+  }
+  .hover-nav-link svg { width: 15px; height: 15px; flex-shrink: 0; }
+  .hover-nav-link:hover { background: var(--hover); color: var(--text-primary); }
+  .hover-nav-divider { height: 1px; background: var(--border); margin: 10px 0; }
+  .hover-nav-logout { color: var(--red); }
+  .hover-nav-logout:hover { background: var(--red-soft); }
+
+  /* ---- Top bar ---- */
+  .topbar {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 10px 14px;
+    flex-shrink: 0;
+  }
+  .topbar-left { display: flex; align-items: center; gap: 9px; }
+  .app-icon {
+    width: 28px; height: 28px;
+    border-radius: 8px;
+    background: var(--accent-soft);
+    display: flex; align-items: center; justify-content: center;
+    color: var(--accent);
+  }
+  .app-icon svg { width: 16px; height: 16px; }
+  .app-title { font-weight: 650; font-size: 16px; letter-spacing: -0.01em; }
+
+  .topbar-search {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 7px 12px;
+    max-width: 420px;
+    transition: border-color 0.15s var(--ease);
+  }
+  .topbar-search:focus-within { border-color: var(--accent); }
+  .topbar-search .search-icon { width: 15px; height: 15px; color: var(--text-tertiary); flex-shrink: 0; }
+  .topbar-search input {
+    border: none; background: transparent; outline: none;
+    font-size: 14px; color: var(--text-primary); width: 100%;
+  }
+  .topbar-search input::placeholder { color: var(--text-tertiary); }
+
+  .search-icon-btn {
+    display: flex; align-items: center; justify-content: center;
+    border: none; background: transparent; padding: 0; flex-shrink: 0;
+    color: var(--text-tertiary);
+  }
+  .search-close-btn {
+    display: none; align-items: center; justify-content: center;
+    border: none; background: transparent; padding: 0; flex-shrink: 0;
+    color: var(--text-tertiary); width: 20px; height: 20px;
+  }
+  .search-close-btn svg { width: 16px; height: 16px; }
+
+  .topbar-right { display: flex; align-items: center; gap: 4px; margin-left: auto; }
+
+  .icon-btn {
+    position: relative;
+    width: 32px; height: 32px;
+    border: none;
+    border-radius: 50%;
+    background: transparent;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--text-secondary);
+    transition: background 0.15s var(--ease);
+  }
+  .icon-btn svg { width: 17px; height: 17px; }
+  .icon-btn:hover { background: var(--hover); color: var(--text-primary); }
+  .sync-icon.spinning { animation: spin 0.8s linear infinite; }
+
+  .badge {
+    position: absolute;
+    top: 3px; right: 3px;
+    min-width: 14px; height: 14px;
+    border-radius: 8px;
+    background: var(--red);
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+    padding: 0 3px;
+    border: 1.5px solid var(--surface);
+  }
+
+  .notif-wrap, .profile-wrap { position: relative; }
+  .popover {
+    position: absolute;
+    top: 42px; right: 0;
+    width: 300px;
+    max-height: 360px;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: 8px;
+    z-index: 30;
+    box-shadow: var(--shadow-lg);
+    animation: popIn 0.15s var(--ease-spring);
+  }
+  @keyframes popIn {
+    from { opacity: 0; transform: translateY(-4px) scale(0.98); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  .popover-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 4px 8px; }
+  .popover-title { font-size: 11.5px; font-weight: 700; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.04em; padding: 0; }
+  .notif-clear-btn {
+    border: none; background: transparent; color: var(--accent);
+    font-size: 11.5px; font-weight: 700; padding: 4px 7px; border-radius: 6px;
+    flex-shrink: 0;
+    transition: background 0.14s var(--ease);
+  }
+  .notif-clear-btn:hover { background: var(--accent-soft); }
+  .popover-list { display: flex; flex-direction: column; gap: 2px; }
+  .popover-item {
+    padding: 8px 8px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: background 0.12s var(--ease);
+  }
+  .popover-item:hover { background: var(--hover); }
+  .popover-item-header { font-size: 12.5px; font-weight: 750; margin-bottom: 3px; }
+  .popover-item-header.state-new { color: var(--accent); }
+  .popover-item-header.state-approved { color: var(--green); }
+  .popover-item-header.state-rejected { color: var(--red); }
+  .popover-item-sub { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .popover-sub-text {
+    font-size: 12.5px; color: var(--text-secondary);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+  }
+  .popover-sub-time { font-size: 11px; color: var(--text-tertiary); flex-shrink: 0; }
+  .popover-empty { padding: 16px 8px; font-size: 13.5px; color: var(--text-tertiary); text-align: center; }
+
+  /* ---- Profile ---- */
+  .profile-chip {
+    display: flex; align-items: center; gap: 8px;
+    padding: 4px 8px 4px 4px;
+    border: none;
+    border-radius: 999px;
+    background: transparent;
+    transition: background 0.15s var(--ease);
+  }
+  .profile-chip:hover { background: var(--hover); }
+  .avatar {
+    width: 26px; height: 26px;
+    border-radius: 50%;
+    background: var(--accent-soft);
+    color: var(--accent);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 700;
+    flex-shrink: 0;
+  }
+  .profile-meta { display: flex; flex-direction: column; line-height: 1.15; text-align: left; }
+  .profile-name { font-size: 13.5px; font-weight: 650; color: var(--text-primary); }
+  .profile-role { font-size: 11px; color: var(--text-tertiary); }
+  .chevron { width: 13px; height: 13px; color: var(--text-tertiary); transition: transform 0.15s var(--ease); }
+  .profile-chip[aria-expanded="true"] .chevron { transform: rotate(180deg); }
+
+  .profile-menu { width: 240px; padding: 6px; }
+  .profile-menu-header { padding: 8px 10px 10px; border-bottom: 1px solid var(--border); margin-bottom: 6px; }
+  .profile-menu-email { font-size: 12.5px; color: var(--text-tertiary); word-break: break-all; }
+  .menu-item {
+    width: 100%;
+    display: flex; align-items: center; gap: 9px;
+    padding: 9px 10px;
+    border: none;
+    background: transparent;
+    border-radius: var(--radius-sm);
+    font-size: 13.5px;
+    font-weight: 600;
+    color: var(--red);
+    transition: background 0.12s var(--ease);
+  }
+  .menu-item svg { width: 15px; height: 15px; }
+  .menu-item:hover { background: var(--red-soft); }
+
+  /* ---- Split view ---- */
+  .split-view { flex: 1; display: flex; gap: 12px; min-height: 0; }
+
+  .sidebar {
+    width: 34%;
+    min-width: 300px;
+    display: flex;
+    flex-direction: column;
+    padding: 14px;
+    gap: 12px;
+    overflow: hidden;
+  }
+
+  .filter-pills { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; flex-shrink: 0; }
+  .filter-pills::-webkit-scrollbar { height: 0; }
+  .pill {
+    flex-shrink: 0;
+    padding: 6px 13px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: transparent;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    transition: all 0.15s var(--ease);
+    white-space: nowrap;
+  }
+  .pill:hover { background: var(--hover); }
+  .pill.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+  .request-stack {
+    flex: 1;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding-right: 2px;
+  }
+  .sidebar-empty { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--text-tertiary); font-size: 13.5px; text-align: center; }
+
+  .req-card {
+    position: relative;
+    padding: 14px 15px;
+    border-radius: var(--radius-md);
+    background: var(--bg);
+    border: 1px solid transparent;
+    border-left: 3px solid transparent;
+    cursor: pointer;
+    /* opacity/transform are part of the transition list, and the card has
+       a fade+scale-out animation — together with .removing below, this is
+       what lets an approved/rejected card visibly shrink out instead of
+       just vanishing on the next list rebuild (see
+       lockRequestUiInstantly() in JavaScript.html, which triggers this
+       class the instant a decision button is clicked). */
+    transition: background 0.14s var(--ease), border-color 0.14s var(--ease),
+      opacity 0.22s var(--ease), transform 0.22s var(--ease);
+    animation: cardIn 0.25s var(--ease) backwards;
+  }
+  @keyframes cardIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+  .req-card:hover { background: var(--hover); }
+  .req-card.active {
+    background: var(--accent-soft);
+    border-color: var(--border);
+    border-left-color: var(--accent);
+  }
+  /* Applied the instant a request is approved/rejected, just before the
+     sidebar list rebuilds without it — see lockRequestUiInstantly() /
+     handleDecisionFailure() in JavaScript.html. */
+  .req-card.removing {
+    opacity: 0;
+    transform: scale(0.96) translateX(10px);
+    pointer-events: none;
+  }
+
+  .req-card-main { display: flex; gap: 11px; }
+  .req-avatar {
+    width: 36px; height: 36px; border-radius: 50%; flex-shrink: 0;
+    background: var(--accent-soft); color: var(--accent);
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 750; font-size: 13px;
+  }
+  .req-card-body { flex: 1; min-width: 0; }
+
+  .req-card-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 5px; }
+  .source-badge {
+    font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
+    padding: 3px 7px; border-radius: 6px;
+    background: var(--accent-soft); color: var(--accent);
+    flex-shrink: 0;
+  }
+  .req-time { font-size: 11.5px; color: var(--text-tertiary); white-space: nowrap; }
+  /* Request ID and Title share one font-size token (--id-title-size) so a
+     change here stays in sync between the list card and the detail view. */
+  .req-title { font-size: var(--id-title-size); font-weight: 700; margin-bottom: 4px; line-height: 1.3; color: var(--text-primary); }
+  .req-requester { font-size: 13.5px; color: var(--text-secondary); margin-bottom: 8px; }
+
+  .req-card-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .req-id-mono {
+    font-size: var(--id-title-size); color: var(--text-tertiary);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+
+  .status-pill { font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 999px; white-space: nowrap; flex-shrink: 0; }
+  .status-pending { background: var(--orange-soft); color: var(--orange); }
+  .status-approved { background: var(--green-soft); color: var(--green); }
+  .status-rejected { background: var(--red-soft); color: var(--red); }
+
+  /* ==========================================================================
+     DETAIL VIEW — toolbar + title, two info cards side by side, audit trail,
+     quick replies, split approve/reject bar.
+  ========================================================================== */
+  .detail-view {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    overflow: hidden;
+    position: relative;
+    width: 100%;
+  }
+  .detail-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: var(--text-tertiary); }
+  .detail-empty p { margin: 0; font-size: 14px; font-weight: 500; }
+
+  /* -webkit-overflow-scrolling + overscroll-behavior, combined with
+     .action-dock being position:sticky (below) rather than absolute, keeps
+     the sticky dock from ever covering unscrolled content underneath it. */
+  .detail-content {
+    flex: 1;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .detail-toolbar {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; padding: 14px 16px 0; flex-shrink: 0;
+  }
+  .detail-toolbar-left { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+  .detail-toolbar-right { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+
+  .toolbar-btn {
+    display: flex; align-items: center; justify-content: center; gap: 5px;
+    height: 30px; padding: 0 12px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: transparent;
+    font-size: 12.5px; font-weight: 650;
+    color: var(--text-secondary);
+    transition: background 0.15s var(--ease), color 0.15s var(--ease), opacity 0.15s var(--ease);
+  }
+  .toolbar-btn svg { width: 14px; height: 14px; display: block; }
+  .toolbar-btn:hover:not(:disabled) { background: var(--hover); color: var(--text-primary); }
+  .toolbar-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .toolbar-btn.icon-only { width: 30px; padding: 0; border-radius: 50%; }
+
+  /* Mobile-only "back to list" button rendered at the start of the detail
+     toolbar. Hidden on desktop/tablet; see the 768px media query below. */
+  .mobile-back-btn { display: none; }
+
+  .detail-header-block { padding: 10px 16px 14px; flex-shrink: 0; }
+  .detail-title-lg {
+    font-size: var(--detail-title-size); font-weight: 750; letter-spacing: -0.015em;
+    margin: 0; line-height: 1.3;
+  }
+  .detail-title-id {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: var(--detail-id-size); font-weight: 650;
+    letter-spacing: -0.01em;
+  }
+  .detail-title-sep { color: var(--text-tertiary); font-weight: 500; padding: 0 4px; }
+  .detail-subline { font-size: 13.5px; color: var(--text-tertiary); margin-top: 6px; }
+
+  .detail-body-scroll { padding: 0 16px 14px; width: 100%; }
+
+  .card-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; align-items: stretch; width: 100%; }
+  @media (max-width: 1150px) { .card-grid { grid-template-columns: 1fr; } }
+
+  .info-card {
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg);
+    padding: 13px 15px;
+  }
+  .info-card-title {
+    font-size: 11px; font-weight: 750; text-transform: uppercase;
+    letter-spacing: 0.05em; color: var(--text-tertiary); margin-bottom: 11px;
+  }
+
+  .requester-row { display: flex; align-items: center; gap: 10px; margin-bottom: 11px; }
+  .avatar-lg {
+    width: 36px; height: 36px; border-radius: 50%;
+    background: var(--accent-soft); color: var(--accent);
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 750; font-size: 13px; flex-shrink: 0;
+  }
+  .requester-name { font-size: 14px; font-weight: 650; line-height: 1.3; }
+  .requester-email { font-size: 11.5px; color: var(--text-tertiary); line-height: 1.4; word-break: break-all; }
+
+  .info-divider { height: 1px; background: var(--border); margin: 9px 0; }
+
+  .kv-inline { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 4px 0; font-size: 13.5px; }
+  .kv-inline .kv-key { color: var(--text-tertiary); font-weight: 600; flex-shrink: 0; }
+  .kv-inline .kv-val { color: var(--text-primary); font-weight: 550; text-align: right; word-break: break-word; }
+
+  .details-kv-scroll {
+    max-height: var(--details-kv-max-height);
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding-right: 6px;
+    margin-right: -6px;
+  }
+  .details-kv-scroll::-webkit-scrollbar { width: 5px; }
+  .details-kv-scroll::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 6px; }
+  .details-kv-scroll .kv-inline:first-child { padding-top: 0; }
+
+  .desc-label {
+    font-size: 11px; font-weight: 750; text-transform: uppercase;
+    letter-spacing: 0.05em; color: var(--text-tertiary); margin: 9px 0 6px;
+  }
+  .desc-text { font-size: 13.5px; line-height: 1.55; white-space: pre-wrap; color: var(--text-primary); }
+
+  /* ---- Large, dedicated attachment preview inside the detail panel ---- */
+  .attachment-block { margin-top: 9px; }
+  .attachment-viewer-large {
+    position: relative;
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    cursor: zoom-in;
+    transition: border-color 0.15s var(--ease);
+  }
+  .attachment-viewer-large:hover { border-color: var(--border-strong); }
+  .attachment-image-large {
+    display: block; width: 100%; height: 320px; object-fit: contain;
+    background:
+      linear-gradient(45deg, var(--bg) 25%, transparent 25%, transparent 75%, var(--bg) 75%, var(--bg)),
+      linear-gradient(45deg, var(--bg) 25%, var(--surface) 25%, var(--surface) 75%, var(--bg) 75%, var(--bg));
+    background-size: 18px 18px;
+    background-position: 0 0, 9px 9px;
+  }
+  .attachment-viewer-hint {
+    position: absolute; bottom: 8px; right: 10px;
+    font-size: 11px; font-weight: 650; color: #fff;
+    background: rgba(0,0,0,0.55); padding: 3px 9px; border-radius: 999px;
+    pointer-events: none;
+  }
+  .attachment-viewer-large.broken { cursor: default; }
+  .attachment-viewer-large.broken .attachment-image-large,
+  .attachment-viewer-large.broken .attachment-viewer-hint { display: none; }
+  .attachment-viewer-large.broken::after {
+    content: 'Preview unavailable — open the original instead';
+    display: block; padding: 34px 12px; font-size: 12.5px; color: var(--text-tertiary); text-align: center;
+  }
+  .attachment-link {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 8px 12px; border-radius: var(--radius-sm);
+    background: var(--surface); border: 1px solid var(--border);
+    text-decoration: none; color: var(--accent);
+    font-size: 13.5px; font-weight: 650;
+    transition: background 0.14s var(--ease);
+  }
+  .attachment-link:hover { background: var(--hover); }
+  .attachment-link svg { width: 14px; height: 14px; flex-shrink: 0; }
+  .attachment-link-secondary { margin-top: 8px; }
+
+  /* ---- Click-to-enlarge lightbox ---- */
+  .lightbox-overlay {
+    position: fixed; inset: 0; z-index: 200;
+    background: rgba(8,8,10,0.86);
+    display: flex; align-items: center; justify-content: center;
+    padding: 30px;
+    animation: fadeIn 0.18s var(--ease);
+  }
+  .lightbox-image { max-width: 100%; max-height: 100%; border-radius: var(--radius-sm); box-shadow: var(--shadow-lg); }
+  .lightbox-close {
+    position: absolute; top: 18px; right: 18px;
+    width: 38px; height: 38px; border-radius: 50%;
+    border: none; background: rgba(255,255,255,0.12); color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    transition: background 0.15s var(--ease);
+  }
+  .lightbox-close svg { width: 18px; height: 18px; }
+  .lightbox-close:hover { background: rgba(255,255,255,0.22); }
+
+  /* ---- Audit trail ---- */
+  .audit-card { margin-bottom: 4px; }
+  .audit-empty { font-size: 13.5px; color: var(--text-tertiary); }
+  .audit-loading { font-size: 13.5px; color: var(--text-tertiary); }
+  .audit-item { display: flex; gap: 9px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+  .audit-item:last-child { border-bottom: none; padding-bottom: 0; }
+  .audit-item:first-child { padding-top: 0; }
+  .audit-dot { width: 7px; height: 7px; border-radius: 50%; margin-top: 5px; flex-shrink: 0; }
+  .audit-dot.approved { background: var(--green); }
+  .audit-dot.rejected { background: var(--red); }
+  .audit-main { flex: 1; min-width: 0; }
+  .audit-line { font-size: 13.5px; color: var(--text-primary); }
+  .audit-line b { font-weight: 700; }
+  .audit-comment { font-size: 13px; color: var(--text-secondary); margin-top: 2px; line-height: 1.4; }
+  .audit-time { font-size: 11.5px; color: var(--text-tertiary); margin-top: 3px; }
+
+  /* ---- Action dock ----
+     position: sticky (not absolute) so it always reserves its own height
+     as a real flex child — nothing scrolling above it is ever covered. */
+  .action-dock {
+    position: sticky;
+    bottom: 0;
+    margin-top: auto;
+    width: 100%;
+    z-index: 10;
+    background: var(--bg);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px 16px 16px;
+    border-top: 1px solid var(--border);
+    box-shadow: 0 -6px 14px rgba(16, 16, 20, 0.05);
+  }
+
+  .quick-replies { display: flex; gap: 6px; flex-wrap: wrap; }
+  .chip-reply {
+    padding: 6px 12px; border-radius: 999px;
+    border: 1px solid var(--border); background: var(--bg);
+    font-size: 13px; font-weight: 600; color: var(--text-secondary);
+    transition: background 0.14s var(--ease), border-color 0.14s var(--ease), color 0.14s var(--ease);
+  }
+  .chip-reply:hover { background: var(--hover); border-color: var(--border-strong); color: var(--text-primary); }
+
+  .comment-input {
+    border: 1px solid var(--border); background: var(--bg);
+    border-radius: var(--radius-sm); padding: 9px 13px;
+    font-size: 14px; color: var(--text-primary); outline: none; font-family: inherit;
+    transition: border-color 0.15s var(--ease);
+    width: 100%;
+  }
+  .comment-input:focus { border-color: var(--accent); }
+
+  /* ---- Pre-decision attachment picker (only rendered for AppSource ===
+     'XCLB' — see renderDetail()'s `showAttachmentPicker` in
+     JavaScript.html) ----
+     A true drag-and-drop zone. The dashed-border label is the drop target
+     and file-browse trigger; once a file is present it's swapped for a
+     compact "chip" showing the filename with a Remove (×) button. */
+  .attachment-dropzone { position: relative; }
+  .attachment-picker-label {
+    display: flex; align-items: center; gap: 7px;
+    padding: 8px 12px; border-radius: var(--radius-sm);
+    border: 1px dashed var(--border-strong); background: var(--bg);
+    font-size: 12.5px; font-weight: 600; color: var(--text-secondary);
+    cursor: pointer; width: 100%;
+    transition: border-color 0.15s var(--ease), color 0.15s var(--ease), background 0.15s var(--ease);
+  }
+  .attachment-picker-label:hover { border-color: var(--accent); color: var(--accent); }
+  .attachment-picker-label svg { width: 14px; height: 14px; flex-shrink: 0; }
+  .attachment-picker-label span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .attachment-dropzone.drag-over .attachment-picker-label {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+  .attachment-picker-input {
+    position: absolute; width: 1px; height: 1px;
+    padding: 0; margin: -1px; overflow: hidden;
+    clip: rect(0,0,0,0); white-space: nowrap; border: 0;
+  }
+  .attachment-file-chip {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 10px; border-radius: var(--radius-sm);
+    background: var(--accent-soft); border: 1px solid var(--accent-soft-strong);
+    font-size: 12.5px; font-weight: 600; color: var(--accent);
+    animation: popIn 0.15s var(--ease-spring);
+  }
+  .attachment-file-chip svg.file-icon { width: 14px; height: 14px; flex-shrink: 0; }
+  .attachment-file-chip span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .attachment-file-remove {
+    border: none; background: transparent; color: var(--accent);
+    width: 20px; height: 20px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+    transition: background 0.14s var(--ease);
+  }
+  .attachment-file-remove svg { width: 12px; height: 12px; }
+  .attachment-file-remove:hover { background: var(--accent-soft-strong); }
+
+  .action-buttons-row { display: flex; gap: 8px; }
+  .action-btn {
+    flex: 1; border: none; border-radius: var(--radius-sm); padding: 11px 18px;
+    font-size: 14.5px; font-weight: 750; color: #fff;
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+    transition: filter 0.15s var(--ease), opacity 0.15s var(--ease);
+  }
+  .action-btn svg { width: 15px; height: 15px; }
+  .action-btn:hover { filter: brightness(1.08); }
+  .action-btn:active { transform: scale(0.98); }
+  .action-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-approve { background: var(--green); flex: 1; }
+  .btn-reject { background: var(--red); flex: 1; }
+  /* AppSource 'XCLB' → single "Sign Off" button, styled with the accent
+     color to read as a distinct, one-button action rather than a green
+     Approve — it's still wired to the exact same handler as Approve. */
+  .btn-signoff { background: var(--accent); flex: 1; }
+
+  .decided-banner { flex: 1; text-align: center; font-size: 13.5px; font-weight: 650; padding: 8px; }
+  /* NEW (2. Button State & Immediate Visual Feedback): the instant-lock
+     "Already Approved"/"Already Rejected" label rendered by
+     renderLockedActionDock() in JavaScript.html. Reuses .decided-banner's
+     sizing/weight but adds the small check icon + centered flex layout. */
+  .locked-banner {
+    display: flex; align-items: center; justify-content: center; gap: 7px;
+  }
+  .locked-banner svg { flex-shrink: 0; }
+
+  /* ==========================================================================
+     TOASTS — Sonner-style, pinned top-right on every screen size.
+  ========================================================================== */
+  .toast-container {
+    position: fixed;
+    top: 16px;
+    right: 16px;
+    z-index: 100;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    align-items: flex-end;
+    pointer-events: none;
+  }
+  .toast {
+    pointer-events: auto;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    min-width: 220px;
+    max-width: 360px;
+    padding: 11px 14px 11px 12px;
+    border-radius: var(--radius-md);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--text-tertiary);
+    box-shadow: var(--shadow-lg);
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    opacity: 0;
+    transform: translateX(18px);
+    transition: transform 0.25s var(--ease-spring), opacity 0.2s var(--ease);
+  }
+  .toast.toast-in { opacity: 1; transform: translateX(0); }
+  .toast.toast-out {
+    opacity: 0;
+    transform: translateX(10px);
+    transition: transform 0.2s var(--ease), opacity 0.2s var(--ease);
+  }
+
+  .toast-icon { display: flex; flex-shrink: 0; width: 17px; height: 17px; }
+  .toast-icon svg { width: 100%; height: 100%; }
+  .toast-msg { line-height: 1.4; }
+
+  .toast-success { border-left-color: var(--green); }
+  .toast-success .toast-icon { color: var(--green); }
+  .toast-error { border-left-color: var(--red); }
+  .toast-error .toast-icon { color: var(--red); }
+  .toast-info { border-left-color: var(--accent); }
+  .toast-info .toast-icon { color: var(--accent); }
+
+  @media (max-width: 480px) {
+    .toast { min-width: 200px; max-width: calc(100vw - 32px); }
+  }
+
+  /* ==========================================================================
+     RESPONSIVE
+  ========================================================================== */
+  @media (max-width: 880px) and (min-width: 768.02px) {
+    .split-view { flex-direction: column; }
+    .sidebar { width: 100%; min-width: 0; max-height: 40vh; }
+    .detail-view { flex: 1; }
+    .profile-meta { display: none; }
+  }
+
+  /* ---- True mobile: card-list-first navigation, no split view.
+     Below 768px the sidebar (card list) and detail panel are never shown
+     together. The list is the default view; tapping a card swaps to a
+     full-screen detail view; a back button (or a completed decision) swaps
+     back. ---- */
+  @media (max-width: 768px) {
+    .app-shell { padding: 8px; gap: 8px; }
+    .profile-meta { display: none; }
+
+    .split-view { flex-direction: column; flex: 1; min-height: 0; position: relative; }
+
+    .sidebar { width: 100%; min-width: 0; max-height: none; flex: 1; }
+    .detail-view {
+      position: absolute; inset: 0;
+      z-index: 5;
+      display: none;
+    }
+
+    .split-view.show-detail .sidebar { display: none; }
+    .split-view.show-detail .detail-view { display: flex; }
+
+    .mobile-back-btn { display: flex !important; }
+
+    .attachment-image-large { height: 220px; }
+
+    /* On touch devices the hover-nav panel opens via tap (`.expanded`,
+       toggled in JavaScript.html) rather than hover, and is capped so it
+       never runs off a narrow screen. */
+    .hover-nav-panel { max-width: 78vw; }
+    .hover-nav:hover .hover-nav-panel { width: 0; padding: 0; pointer-events: none; } /* hover no-ops on touch */
+    .hover-nav.expanded .hover-nav-panel { width: 210px; padding: 20px 14px; pointer-events: auto; }
+  }
+
+  /* ---- Popovers on mobile: anchored to the viewport, not the trigger
+     button. A 300px-wide, right:0-of-button popover can run off either
+     edge of a narrow phone screen depending on where its button sits in
+     the topbar — pinning it to the viewport with side margins guarantees
+     it always fits regardless of anchor position. ---- */
+  @media (max-width: 640px) {
+    .topbar-search {
+      flex: 0 0 auto;
+      width: 32px;
+      height: 32px;
+      padding: 0;
+      border-color: transparent;
+      background: transparent;
+      overflow: hidden;
+      max-width: none;
+    }
+    .topbar-search .search-icon-btn { width: 32px; height: 32px; }
+    .topbar-search input,
+    .topbar-search .search-close-btn { display: none; }
+
+    .topbar-search.expanded {
+      position: fixed;
+      top: 10px; left: 10px; right: 10px;
+      z-index: 70;
+      width: auto; height: auto;
+      background: var(--surface);
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius-md);
+      padding: 9px 12px;
+      box-shadow: var(--shadow-lg);
+      overflow: visible;
+    }
+    .topbar-search.expanded input {
+      display: block;
+      font-size: 16px; /* keeps iOS from auto-zooming on focus */
+    }
+    .topbar-search.expanded .search-close-btn { display: flex; }
+
+    .popover {
+      position: fixed;
+      top: 64px;
+      left: 10px;
+      right: 10px;
+      width: auto;
+      max-width: none;
+      max-height: min(360px, calc(100vh - 84px));
+      z-index: 45;
+    }
+    .profile-menu { width: auto; }
+  }
+
+  /* ==========================================================================
+     ACCESSIBILITY
+  ========================================================================== */
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+  }
+</style>

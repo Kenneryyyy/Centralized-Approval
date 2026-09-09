@@ -1,0 +1,1470 @@
+<script>
+(function () {
+  'use strict';
+
+  // ==========================================================================
+  // NEW IN THIS REVISION (see Code.gs header for the matching backend notes)
+  //
+  //   1. Audit Logs & Staging Tables Sync
+  //      proceedWithDecision() now calls syncApprovalToStaging() right after
+  //      updateApprovalStatus() succeeds — passing the SAME `comment` that
+  //      goes into logAuditEntry() — so al_comments/al_attachment on
+  //      StagingAllReq/StagingEntries/StagingXC always match the audit log.
+  //      This call was previously entirely missing from the client.
+  //
+  //   2. Button State & Immediate Visual Feedback
+  //      submitDecision() now locks the UI SYNCHRONOUSLY, before any
+  //      network call: the clicked action row is replaced with a static,
+  //      disabled "Already Approved"/"Already Rejected" label (no spinner),
+  //      via lockRequestUiInstantly() / renderLockedActionDock(). The old
+  //      setButtonLoading()/resetActionButtons() spinner flow is removed.
+  //
+  //   3. Real-Time Syncing / Deck Resurfacing Fix
+  //      state.blacklistedUids is a client-side Set of uids that have been
+  //      locally actioned this session. It is checked FIRST, ahead of the
+  //      server's own Status field, in every place a request could render:
+  //      applyFilters() (sidebar deck), buildFilterPills() (pending counts
+  //      used to build the source pills), renderNotifications() (bell
+  //      popover), recomputeNotifBadgeFromState() (badge count), and
+  //      onDataLoaded()'s "is this new data / should I still be showing the
+  //      open detail panel" checks. Because of this, a background poll (or
+  //      a manual Sync) that lands BEFORE the AppSheet write is visible —
+  //      and so still reports the request as "Pending" — can no longer
+  //      resurrect it in the UI: the blacklist entry, set the instant the
+  //      user clicked, wins regardless of what the server says. An entry
+  //      is only ever removed from the blacklist if the save genuinely
+  //      failed (see handleDecisionFailure()), so the item can be retried.
+  //
+  //   4. Conditional Upload File Visibility
+  //      renderDetail() now only emits the attachment-dropzone markup when
+  //      AppSource === 'XCLB' (the existing `isSignOffOnly` flag already
+  //      means exactly this). bindAttachmentPicker()'s own logic is
+  //      untouched — it simply no-ops when the dropzone isn't in the DOM.
+  //
+  //   5. Hover Navigation Sidebar
+  //      bindHoverNav() + loadQuickLinks()/renderQuickLinks() populate and
+  //      wire up the #hover-nav element added to Index.html.
+  //
+  //   7. Backend Speed & Optimization
+  //      loadApprovalData() now takes a forceRefresh flag: true on initial
+  //      load and manual "Sync now" clicks (always fresh), false on the
+  //      background poll (may be served from Code.gs's short cache).
+  // ==========================================================================
+
+  // ==========================================================================
+  // STATE
+  // ==========================================================================
+  const state = {
+    user: null,
+    sessionToken: null,
+    requests: [],
+    filteredRequests: [],
+    activeFilter: 'All',
+    searchQuery: '',
+    selectedUid: null,
+    pollHandle: null,
+    lastNotifIds: new Set(),
+    signInInitialized: false,
+    auditRequestId: null,
+    notifBadgeSuppressed: false,
+    lastRenderedSignature: null,
+    mobileDetailActive: false,
+    isSyncing: false, // guards the Sync button against overlapping clicks
+
+    // NEW (3. Real-Time Syncing): uids the current session has locally
+    // approved/rejected. Checked ahead of server Status everywhere a
+    // request could render — see the header comment above.
+    blacklistedUids: new Set()
+  };
+
+  const POLL_INTERVAL_MS = 30000;
+  const QUICK_REPLIES = ['Approved as requested.', 'Okay'];
+  const MOBILE_SEARCH_BREAKPOINT = 640;
+  const MOBILE_NAV_BREAKPOINT = 768;
+  const CARD_REMOVE_ANIMATION_MS = 220; // matches the .req-card transition duration in Styles.html
+
+  const SIGN_OFF_APP_SOURCES = ['XCLB'];
+  const XC_LABEL_APP_SOURCES = ['XCLB', 'XCSB'];
+
+  // ==========================================================================
+  // DOM REFS
+  // ==========================================================================
+  const el = {
+    authGate: document.getElementById('auth-gate'),
+    authCard: document.getElementById('auth-card'),
+    authSpinner: document.getElementById('auth-spinner'),
+    authStatusText: document.getElementById('auth-status-text'),
+    authSignInWrap: document.getElementById('auth-signin-wrap'),
+    authSignInBtn: document.getElementById('auth-signin-btn'),
+    appShell: document.getElementById('app-shell'),
+
+    topbarSearch: document.getElementById('topbar-search'),
+    searchInput: document.getElementById('search-input'),
+    mobileSearchToggle: document.getElementById('mobile-search-toggle'),
+    mobileSearchClose: document.getElementById('mobile-search-close'),
+    syncBtn: document.getElementById('sync-btn'),
+    themeToggle: document.getElementById('theme-toggle'),
+
+    notifBtn: document.getElementById('notif-btn'),
+    notifBadge: document.getElementById('notif-badge'),
+    notifPopover: document.getElementById('notif-popover'),
+    notifList: document.getElementById('notif-list'),
+    notifClearBtn: document.getElementById('notif-clear-btn'),
+
+    profileChip: document.getElementById('profile-chip'),
+    profileMenu: document.getElementById('profile-menu'),
+    profileMenuEmail: document.getElementById('profile-menu-email'),
+    signOutBtn: document.getElementById('signout-btn'),
+    profileAvatar: document.getElementById('profile-avatar'),
+    profileName: document.getElementById('profile-name'),
+    profileRole: document.getElementById('profile-role'),
+
+    splitView: document.getElementById('split-view'),
+    filterPills: document.getElementById('filter-pills'),
+    requestStack: document.getElementById('request-stack'),
+    sidebarEmpty: document.getElementById('sidebar-empty'),
+
+    detailEmpty: document.getElementById('detail-empty'),
+    detailContent: document.getElementById('detail-content'),
+
+    toastContainer: document.getElementById('toast-container'),
+
+    lightboxOverlay: document.getElementById('attachment-lightbox'),
+    lightboxImage: document.getElementById('lightbox-image'),
+    lightboxClose: document.getElementById('lightbox-close'),
+
+    hoverNav: document.getElementById('hover-nav'),
+    hoverNavRail: document.getElementById('hover-nav-rail'),
+    hoverNavLinks: document.getElementById('hover-nav-links')
+  };
+
+  // ==========================================================================
+  // BOOTSTRAP
+  // ==========================================================================
+  document.addEventListener('DOMContentLoaded', init);
+
+  function init() {
+    applyStoredTheme();
+    bindGlobalEvents();
+    bindHoverNav();
+    checkSession();
+  }
+
+  function checkSession() {
+    resetAuthGate('Checking your session…');
+    google.script.run
+      .withSuccessHandler(onAuthResolved)
+      .withFailureHandler(function (err) { onAuthResolved({ authorized: false, reason: err.message || String(err) }); })
+      .getUserAuthStatus();
+  }
+
+  function resetAuthGate(message) {
+    el.authGate.classList.remove('hidden');
+    el.authSpinner.classList.remove('hidden');
+    el.authStatusText.classList.remove('error', 'muted');
+    el.authStatusText.textContent = message;
+    el.authSignInWrap.classList.add('hidden');
+  }
+
+  function onAuthResolved(auth) {
+    if (!auth || !auth.authorized) {
+      el.authSpinner.classList.add('hidden');
+      el.authStatusText.textContent = (auth && auth.reason) || 'Unauthorized User';
+      el.authStatusText.classList.add(auth && auth.email ? 'muted' : 'error');
+      renderAuthOptions({ mode: 'error' });
+      return;
+    }
+
+    state.user = auth;
+    state.sessionToken = auth.sessionToken || null;
+    renderProfile(auth);
+
+    el.authGate.classList.add('hidden');
+    el.appShell.classList.remove('hidden');
+
+    loadQuickLinks();
+    loadApprovalData({ initial: true, forceRefresh: true });
+    startPolling();
+  }
+
+  // ==========================================================================
+  // SIGN-IN OPTIONS
+  // ==========================================================================
+  function renderAuthOptions(opts) {
+    opts = opts || {};
+    el.authSignInWrap.classList.remove('hidden');
+    el.authSignInWrap.innerHTML = '';
+
+    const retryBtn = document.createElement('button');
+    retryBtn.type = 'button';
+    retryBtn.className = 'auth-retry-btn';
+    retryBtn.textContent = opts.mode === 'signedOut' ? 'Sign in again' : 'Try again';
+    retryBtn.addEventListener('click', function () { checkSession(); });
+    el.authSignInWrap.appendChild(retryBtn);
+
+    const clientId = el.authCard.dataset.clientId;
+    if (!clientId) return;
+
+    const altWrap = document.createElement('div');
+    altWrap.className = 'auth-alt-wrap';
+    const altLabel = document.createElement('p');
+    altLabel.className = 'auth-alt-label';
+    altLabel.textContent = 'or sign in with a different Google account';
+    altWrap.appendChild(altLabel);
+    const gisHost = document.createElement('div');
+    altWrap.appendChild(gisHost);
+    el.authSignInWrap.appendChild(altWrap);
+
+    waitForGoogleIdentity(function () {
+      if (!state.signInInitialized) {
+        google.accounts.id.initialize({
+          client_id: clientId,
+          callback: handleCredentialResponse,
+          auto_select: false,
+          cancel_on_tap_outside: true
+        });
+        state.signInInitialized = true;
+      }
+      google.accounts.id.renderButton(gisHost, {
+        theme: 'outline',
+        size: 'large',
+        shape: 'pill',
+        text: 'signin_with',
+        width: 260
+      });
+    });
+  }
+
+  function waitForGoogleIdentity(callback, attemptsLeft) {
+    attemptsLeft = attemptsLeft === undefined ? 25 : attemptsLeft;
+    if (window.google && window.google.accounts && window.google.accounts.id) {
+      callback();
+      return;
+    }
+    if (attemptsLeft <= 0) return;
+    setTimeout(function () { waitForGoogleIdentity(callback, attemptsLeft - 1); }, 200);
+  }
+
+  function handleCredentialResponse(response) {
+    resetAuthGate('Verifying your Google account…');
+    google.script.run
+      .withSuccessHandler(onAuthResolved)
+      .withFailureHandler(function (err) { onAuthResolved({ authorized: false, reason: err.message || String(err) }); })
+      .authenticateWithIdToken(response.credential);
+  }
+
+  // ==========================================================================
+  // HOVER NAV SIDEBAR (5.)
+  // ==========================================================================
+  function bindHoverNav() {
+    if (!el.hoverNav || !el.hoverNavRail) return;
+
+    // Touch/click fallback: :hover alone doesn't work well on phones, so a
+    // tap on the rail toggles an `.expanded` class that CSS treats the same
+    // as :hover (see Styles.html).
+    function toggleExpanded(e) {
+      e.stopPropagation();
+      el.hoverNav.classList.toggle('expanded');
+    }
+    el.hoverNavRail.addEventListener('click', toggleExpanded);
+    el.hoverNavRail.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleExpanded(e); }
+    });
+
+    document.addEventListener('click', function (e) {
+      if (el.hoverNav.classList.contains('expanded') && !el.hoverNav.contains(e.target)) {
+        el.hoverNav.classList.remove('expanded');
+      }
+    });
+  }
+
+  function loadQuickLinks() {
+    if (!el.hoverNavLinks) return;
+    google.script.run
+      .withSuccessHandler(renderQuickLinks)
+      .withFailureHandler(function () {
+        el.hoverNavLinks.innerHTML = '<div class="hover-nav-loading">Links unavailable</div>';
+      })
+      .getQuickLinks();
+  }
+
+  function renderQuickLinks(links) {
+    if (!el.hoverNavLinks) return;
+    links = links || [];
+    if (!links.length) {
+      el.hoverNavLinks.innerHTML = '<div class="hover-nav-loading">No links configured</div>';
+      return;
+    }
+    el.hoverNavLinks.innerHTML = links.map(function (l) {
+      return (
+        '<a class="hover-nav-link" href="' + escapeAttr(l.url) + '" target="_blank" rel="noopener">' +
+          '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M14 3h7v7M21 3l-9 9M19 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
+          '<span>' + escapeHtml(l.label) + '</span>' +
+        '</a>'
+      );
+    }).join('');
+  }
+
+  // ==========================================================================
+  // DATA LOADING
+  // ==========================================================================
+  function loadApprovalData(opts) {
+    opts = opts || {};
+    if (!opts.silent) setSyncSpinning(true);
+
+    google.script.run
+      .withSuccessHandler(function (rows) { onDataLoaded(rows, opts); })
+      .withFailureHandler(function (err) {
+        setSyncSpinning(false);
+        showToast('error', 'Sync failed: ' + (err.message || err));
+      })
+      .fetchApprovalData(state.sessionToken, !!opts.forceRefresh);
+  }
+
+  function onDataLoaded(rows, opts) {
+    setSyncSpinning(false);
+
+    const previousUids = new Set(state.requests.map(function (r) { return r.uid; }));
+    // NEW (3.): a row the server still shows as new/changed but that THIS
+    // session already actioned locally must never be treated as "new
+    // requests have arrived" — that's exactly the resurfacing bug.
+    const isNewData = rows.some(function (r) {
+      return !previousUids.has(r.uid) && !state.blacklistedUids.has(r.uid);
+    });
+
+    state.requests = rows || [];
+    buildFilterPills();
+    applyFilters();
+
+    if (!opts.initial && isNewData) {
+      showToast('info', 'New requests have arrived');
+      state.notifBadgeSuppressed = false;
+      bumpNotifications();
+    } else {
+      if (!state.notifBadgeSuppressed) recomputeNotifBadgeFromState();
+    }
+    if (opts.initial) checkNotifications();
+
+    // NEW (3.): don't touch the open detail panel for a request this
+    // session already locked — it's already showing the "Already
+    // Approved/Rejected" banner and must stay that way regardless of what
+    // this refresh reports.
+    if (state.selectedUid && !state.blacklistedUids.has(state.selectedUid)) {
+      const stillExists = state.requests.find(function (r) { return r.uid === state.selectedUid; });
+      if (stillExists && (stillExists.Status || '').toLowerCase() === 'pending') {
+        const sig = computeRequestSignature(stillExists);
+        if (sig !== state.lastRenderedSignature) {
+          renderDetail(stillExists);
+        }
+      }
+    }
+  }
+
+  function startPolling() {
+    if (state.pollHandle) clearInterval(state.pollHandle);
+    // forceRefresh is intentionally false here — see Code.gs's short
+    // per-approver cache. Each poll still gets fresh AppSheet data at least
+    // every APPROVAL_DATA_CACHE_TTL_SECONDS, which is well under
+    // POLL_INTERVAL_MS anyway.
+    state.pollHandle = setInterval(function () { loadApprovalData({ silent: true }); }, POLL_INTERVAL_MS);
+  }
+
+  // ==========================================================================
+  // FILTER PILLS
+  // ==========================================================================
+  function buildFilterPills() {
+    // NEW (3.): a locally-actioned request must not keep contributing a
+    // pill / pending count just because the server hasn't caught up yet.
+    const pending = state.requests.filter(function (r) {
+      return !state.blacklistedUids.has(r.uid) && (r.Status || '').toLowerCase() === 'pending';
+    });
+    const sources = Array.from(new Set(pending.map(function (r) { return r.AppSource || 'General'; })));
+    sources.sort();
+    const pills = ['All'].concat(sources);
+
+    el.filterPills.innerHTML = '';
+    pills.forEach(function (source) {
+      const btn = document.createElement('button');
+      btn.className = 'pill' + (source === state.activeFilter ? ' active' : '');
+      btn.textContent = source === 'All' ? 'All' : displayAppSource(source);
+      btn.setAttribute('role', 'tab');
+      btn.addEventListener('click', function () {
+        state.activeFilter = source;
+        Array.from(el.filterPills.children).forEach(function (c) { c.classList.remove('active'); });
+        btn.classList.add('active');
+        applyFilters();
+      });
+      el.filterPills.appendChild(btn);
+    });
+  }
+
+  // ==========================================================================
+  // SEARCH + FILTER + RENDER SIDEBAR
+  // ==========================================================================
+  function applyFilters() {
+    const q = state.searchQuery.trim().toLowerCase();
+
+    state.filteredRequests = state.requests.filter(function (r) {
+      // NEW (3. Real-Time Syncing): the client-side blacklist wins over
+      // whatever Status the server reports. This is THE fix for the deck
+      // resurfacing bug — see the header comment for the full explanation.
+      if (state.blacklistedUids.has(r.uid)) return false;
+
+      const isPending = (r.Status || '').toLowerCase() === 'pending';
+      if (!isPending) return false;
+
+      const matchesSource = state.activeFilter === 'All' || r.AppSource === state.activeFilter;
+      if (!matchesSource) return false;
+      if (!q) return true;
+      return (
+        (r.Title || '').toLowerCase().indexOf(q) !== -1 ||
+        (r.RequesterName || '').toLowerCase().indexOf(q) !== -1 ||
+        (r.RequestID || '').toLowerCase().indexOf(q) !== -1
+      );
+    });
+
+    renderRequestStack();
+    updateToolbarNavState();
+  }
+
+  function renderRequestStack() {
+    el.requestStack.innerHTML = '';
+
+    if (state.filteredRequests.length === 0) {
+      el.sidebarEmpty.classList.remove('hidden');
+      return;
+    }
+    el.sidebarEmpty.classList.add('hidden');
+
+    state.filteredRequests.forEach(function (r, i) {
+      const card = document.createElement('article');
+      card.className = 'req-card' + (r.uid === state.selectedUid ? ' active' : '');
+      card.style.animationDelay = Math.min(i * 20, 240) + 'ms';
+      card.setAttribute('tabindex', '0');
+      card.setAttribute('role', 'button');
+      card.id = 'deck-card-' + r.uid;
+      card.dataset.uid = r.uid;
+      card.dataset.requestId = r.RequestID; // display/debugging only — not used for identity
+
+      card.innerHTML =
+        '<div class="req-card-main">' +
+          '<div class="req-avatar">' + escapeHtml(initials(r.RequesterName)) + '</div>' +
+          '<div class="req-card-body">' +
+            '<div class="req-card-top">' +
+              '<span class="source-badge">' + escapeHtml(displayAppSource(r.AppSource)) + '</span>' +
+              statusPillHtml(r.Status) +
+            '</div>' +
+            '<div class="req-title">' + escapeHtml(r.RequestID) + '</div>' +
+            '<div class="req-requester">' + escapeHtml(r.Title) + '</div>' +
+            '<div class="req-card-footer">' +
+              '<span class="req-id-mono">' + escapeHtml(r.RequesterName) + '</span>' +
+              '<span class="req-time">' + relativeTime(r.CreatedAt) + '</span>' +
+            '</div>' +
+          '</div>' +
+        '</div>';
+
+      card.addEventListener('click', function () { selectItem(r.uid); });
+      card.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectItem(r.uid); }
+      });
+
+      el.requestStack.appendChild(card);
+    });
+  }
+
+  function selectItem(uid) {
+    state.selectedUid = uid;
+    Array.from(el.requestStack.children).forEach(function (card) {
+      card.classList.toggle('active', card.dataset.uid === uid);
+    });
+    const r = state.requests.find(function (x) { return x.uid === uid; });
+    if (r) renderDetail(r);
+    updateToolbarNavState();
+
+    if (isMobileView()) showDetailViewMobile();
+  }
+
+  // ==========================================================================
+  // DETAIL VIEW
+  // ==========================================================================
+  function renderDetail(r) {
+    state.lastRenderedSignature = computeRequestSignature(r);
+
+    el.detailEmpty.classList.add('hidden');
+    el.detailContent.classList.remove('hidden');
+
+    // NEW (3.): a request this session already locked always renders as
+    // "not pending" in the detail panel, regardless of the row's server
+    // Status — this only matters if renderDetail() is ever called directly
+    // on a blacklisted row (e.g. from goToNextRequest right after a
+    // decision); the normal instant-lock path uses renderLockedActionDock()
+    // instead and never reaches here for that uid.
+    const isPending = !state.blacklistedUids.has(r.uid) && (r.Status || '').toLowerCase() === 'pending';
+    const detailsRows = parseDetailsJson(r.DetailsJSON);
+    const canNavigate = state.filteredRequests.length > 1;
+
+    const appSourceUpper = (r.AppSource || '').toString().trim().toUpperCase();
+    const isSignOffOnly = SIGN_OFF_APP_SOURCES.indexOf(appSourceUpper) !== -1;
+    const isXcSource = XC_LABEL_APP_SOURCES.indexOf(appSourceUpper) !== -1;
+
+    // NEW (4. Conditional Upload File Visibility): the attachment dropzone
+    // is only ever emitted into the DOM when AppSource === 'XCLB'
+    // (isSignOffOnly is exactly that check). Its underlying logic
+    // (bindAttachmentPicker, drag/drop, base64 read in submitDecision) is
+    // completely unchanged — it simply isn't rendered, and therefore never
+    // wired up, for any other AppSource.
+    const showAttachmentPicker = isSignOffOnly;
+
+    el.detailContent.innerHTML =
+      '<div class="detail-toolbar">' +
+        '<div class="detail-toolbar-left">' +
+          '<button class="toolbar-btn icon-only mobile-back-btn" id="detail-back-btn" title="Back to list" aria-label="Back to list" type="button">' +
+            '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M15 6l-6 6 6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
+          '</button>' +
+          '<span class="source-badge">' + escapeHtml(displayAppSource(r.AppSource)) + '</span>' +
+          statusPillHtml(r.Status) +
+        '</div>' +
+        '<div class="detail-toolbar-right">' +
+          '<button class="toolbar-btn" id="detail-prev-btn"' + (canNavigate ? '' : ' disabled') + ' title="Previous pending request">' +
+            '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M15 6l-6 6 6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
+            'Previous' +
+          '</button>' +
+          '<button class="toolbar-btn" id="detail-next-btn"' + (canNavigate ? '' : ' disabled') + ' title="Next pending request">' +
+            'Next' +
+            '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
+          '</button>' +
+          '<button class="toolbar-btn icon-only" id="detail-close-btn" title="Close" aria-label="Close">' +
+            '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>' +
+          '</button>' +
+        '</div>' +
+      '</div>' +
+
+      '<div class="detail-header-block">' +
+        '<h2 class="detail-title-lg"><span class="detail-title-id">' + escapeHtml(r.RequestID) + '</span><span class="detail-title-sep">—</span>' + escapeHtml(r.Title) + '</h2>' +
+        '<div class="detail-subline">Created ' + relativeTime(r.CreatedAt) + '</div>' +
+      '</div>' +
+
+      '<div class="detail-body-scroll">' +
+        '<div class="card-grid">' +
+
+          '<div class="info-card">' +
+            '<div class="info-card-title">' + (isXcSource ? 'Employee Profile' : 'Requester Profile') + '</div>' +
+            '<div class="requester-row">' +
+              '<div class="avatar-lg">' + escapeHtml(initials(r.RequesterName)) + '</div>' +
+              '<div>' +
+                '<div class="requester-name">' + escapeHtml(r.RequesterName) + '</div>' +
+                (r.RequesterEmail ? '<div class="requester-email">' + escapeHtml(r.RequesterEmail) + '</div>' : '') +
+              '</div>' +
+            '</div>' +
+            '<div class="info-divider"></div>' +
+            kvInline('Company', r.company) +
+            kvInline('Department', r.dept) +
+            kvInline('Section', r.section) +
+            kvInline('Approver', r.AprEmail) +
+          '</div>' +
+
+          '<div class="info-card">' +
+            '<div class="info-card-title">' + (isXcSource ? 'Exit Details' : 'Request Details') + '</div>' +
+            '<div class="details-kv-scroll">' +
+              (detailsRows.length ? detailsRows.map(function (row) { return kvInline(row.k, row.v); }).join('') : '<div class="audit-empty">No additional details.</div>') +
+            '</div>' +
+            renderAttachmentBlock(r) +
+            '<div class="info-divider"></div>' +
+            '<div class="desc-label">Description</div>' +
+            '<div class="desc-text">' + escapeHtml(r.Description || 'No description provided.') + '</div>' +
+          '</div>' +
+
+        '</div>' +
+
+        '<div class="info-card audit-card">' +
+          '<div class="info-card-title">Approval Audit Trail</div>' +
+          '<div id="audit-list"><div class="audit-loading">Loading history…</div></div>' +
+        '</div>' +
+      '</div>' +
+
+      (isPending ? (
+        '<div class="action-dock">' +
+          '<div class="quick-replies" id="quick-replies">' +
+            QUICK_REPLIES.map(function (q) { return '<button class="chip-reply" data-reply="' + escapeAttr(q) + '">' + escapeHtml(q) + '</button>'; }).join('') +
+          '</div>' +
+          '<input type="text" class="comment-input" id="comment-input" placeholder="Add a comment for the requester…">' +
+
+          (showAttachmentPicker ?
+            '<div class="attachment-dropzone" id="attachment-dropzone">' +
+              '<label class="attachment-picker-label" id="attachment-picker-label" for="decision-attachment-input">' +
+                '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M21 12.5V17a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4V8a4 4 0 0 1 4-4h6.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path d="M16 3l5 5-9.5 9.5H7v-4.5L16 3z" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
+                '<span>Drag & drop a file, or click to browse</span>' +
+              '</label>' +
+              '<input type="file" id="decision-attachment-input" class="attachment-picker-input" accept="image/*,.pdf">' +
+              '<div class="attachment-file-chip hidden" id="attachment-file-chip">' +
+                '<svg class="file-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M14 3v5a1 1 0 0 0 1 1h5" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M17 21H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>' +
+                '<span id="attachment-file-chip-name"></span>' +
+                '<button type="button" class="attachment-file-remove" id="attachment-file-remove" aria-label="Remove attachment">' +
+                  '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>' +
+                '</button>' +
+              '</div>' +
+            '</div>'
+          : '') +
+
+          (isSignOffOnly ?
+            '<div class="action-buttons-row">' +
+              '<button class="action-btn btn-signoff" id="signoff-btn">' +
+                '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M5 12.5l4.5 4.5L19 7" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
+                '<span class="action-btn-label">Sign Off</span>' +
+              '</button>' +
+            '</div>'
+          :
+            '<div class="action-buttons-row">' +
+              '<button class="action-btn btn-approve" id="approve-btn">' +
+                '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M5 12.5l4.5 4.5L19 7" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
+                '<span class="action-btn-label">Approve</span>' +
+              '</button>' +
+              '<button class="action-btn btn-reject" id="reject-btn"><span class="action-btn-label">Reject</span></button>' +
+            '</div>'
+          ) +
+        '</div>'
+      ) : (
+        '<div class="action-dock">' +
+          '<div class="decided-banner" style="color:' + (r.Status === 'Approved' ? 'var(--green)' : 'var(--red)') + '">' +
+            'This request was already ' + escapeHtml(r.Status) + '.' +
+          '</div>' +
+        '</div>'
+      ));
+
+    if (isPending) {
+      if (isSignOffOnly) {
+        document.getElementById('signoff-btn').addEventListener('click', function () { submitDecision(r, 'Approved'); });
+      } else {
+        document.getElementById('approve-btn').addEventListener('click', function () { submitDecision(r, 'Approved'); });
+        document.getElementById('reject-btn').addEventListener('click', function () { submitDecision(r, 'Rejected'); });
+      }
+
+      const commentEl = document.getElementById('comment-input');
+      Array.from(document.querySelectorAll('#quick-replies .chip-reply')).forEach(function (chip) {
+        chip.addEventListener('click', function () {
+          commentEl.value = chip.dataset.reply;
+          commentEl.focus();
+        });
+      });
+
+      if (showAttachmentPicker) bindAttachmentPicker();
+    }
+
+    document.getElementById('detail-prev-btn').addEventListener('click', goToPreviousRequest);
+    document.getElementById('detail-next-btn').addEventListener('click', goToNextRequest);
+    document.getElementById('detail-close-btn').addEventListener('click', closeDetail);
+    document.getElementById('detail-back-btn').addEventListener('click', function () { showListView(); });
+
+    bindAttachmentFallback();
+    loadAuditTrail(r.RequestID);
+  }
+
+  function displayAppSource(source) {
+    const s = (source || '').toString().trim().toUpperCase();
+    if (XC_LABEL_APP_SOURCES.indexOf(s) !== -1) return 'XC';
+    return source || 'General';
+  }
+
+  function kvInline(label, value) {
+    return '<div class="kv-inline"><div class="kv-key">' + escapeHtml(label) + '</div><div class="kv-val">' + escapeHtml(value || '—') + '</div></div>';
+  }
+
+  // ==========================================================================
+  // ATTACHMENT PREVIEW — Google Drive URL fix
+  // ==========================================================================
+  function extractDriveFileId(url) {
+    if (!url) return '';
+    const patterns = [
+      /\/file\/d\/([a-zA-Z0-9_-]{10,})/,
+      /[?&]id=([a-zA-Z0-9_-]{10,})/,
+      /\/d\/([a-zA-Z0-9_-]{10,})/
+    ];
+    for (let i = 0; i < patterns.length; i++) {
+      const m = url.match(patterns[i]);
+      if (m && m[1]) return m[1];
+    }
+    return '';
+  }
+
+  function resolveAttachmentPreviewUrl(rawUrl) {
+    if (!rawUrl) return { previewUrl: '', fallbackUrl: '', isDrive: false };
+
+    const isDriveHost = /drive\.google\.com|googleusercontent\.com/i.test(rawUrl);
+    if (!isDriveHost) return { previewUrl: rawUrl, fallbackUrl: '', isDrive: false };
+
+    const fileId = extractDriveFileId(rawUrl);
+    if (!fileId) return { previewUrl: rawUrl, fallbackUrl: '', isDrive: true };
+
+    return {
+      previewUrl: 'https://lh3.googleusercontent.com/d/' + fileId,
+      fallbackUrl: 'https://drive.google.com/uc?export=view&id=' + fileId,
+      isDrive: true
+    };
+  }
+
+  function renderAttachmentBlock(r) {
+    if (!r.attachment) return '';
+    const originalUrl = r.attachmentUrl || r.attachment;
+
+    if (isImageAttachment(r.attachment)) {
+      const resolved = resolveAttachmentPreviewUrl(originalUrl);
+      return (
+        '<div class="attachment-block">' +
+          '<div class="attachment-viewer-large" data-full-src="' + escapeAttr(resolved.previewUrl) + '">' +
+            '<img class="attachment-image-large" src="' + escapeAttr(resolved.previewUrl) + '" data-fallback-src="' + escapeAttr(resolved.fallbackUrl) + '" alt="Request attachment preview" loading="lazy">' +
+            '<div class="attachment-viewer-hint">Click to enlarge</div>' +
+          '</div>' +
+          '<a class="attachment-link attachment-link-secondary" href="' + escapeAttr(originalUrl) + '" target="_blank" rel="noopener">' +
+            '<svg viewBox="0 0 24 24" fill="none"><path d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
+            'Open original' +
+          '</a>' +
+        '</div>'
+      );
+    }
+
+    return (
+      '<div class="attachment-block">' +
+        '<a class="attachment-link" href="' + escapeAttr(originalUrl) + '" target="_blank" rel="noopener">' +
+          '<svg viewBox="0 0 24 24" fill="none"><path d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
+          'Download attachment' +
+        '</a>' +
+      '</div>'
+    );
+  }
+
+  function bindAttachmentFallback() {
+    const viewer = document.querySelector('.attachment-viewer-large');
+    if (!viewer) return;
+    const img = viewer.querySelector('img');
+    if (img) {
+      img.addEventListener('error', function onError() {
+        const fallback = img.dataset.fallbackSrc;
+        if (fallback && img.dataset.fallbackTried !== '1') {
+          img.dataset.fallbackTried = '1';
+          img.src = fallback;
+          viewer.dataset.fullSrc = fallback;
+          return;
+        }
+        viewer.classList.add('broken');
+      });
+    }
+    viewer.addEventListener('click', function () {
+      if (viewer.classList.contains('broken')) return;
+      openLightbox(viewer.dataset.fullSrc);
+    });
+  }
+
+  function openLightbox(src) {
+    if (!src) return;
+    el.lightboxImage.src = src;
+    el.lightboxOverlay.classList.remove('hidden');
+  }
+
+  function closeLightbox() {
+    el.lightboxOverlay.classList.add('hidden');
+    el.lightboxImage.src = '';
+  }
+
+  function isImageAttachment(path) {
+    return /\.(png|jpe?g|gif|webp|bmp|svg)(\?.*)?$/i.test(path || '');
+  }
+
+  // ==========================================================================
+  // PRE-DECISION ATTACHMENT PICKER
+  // (4.) Only ever bound when renderDetail() actually emits the dropzone
+  // markup, i.e. AppSource === 'XCLB'. The function itself is unchanged —
+  // it already no-ops safely if the dropzone isn't in the DOM.
+  // ==========================================================================
+  function bindAttachmentPicker() {
+    const dropzone = document.getElementById('attachment-dropzone');
+    const attachInput = document.getElementById('decision-attachment-input');
+    const attachLabel = document.getElementById('attachment-picker-label');
+    const attachChip = document.getElementById('attachment-file-chip');
+    const attachChipName = document.getElementById('attachment-file-chip-name');
+    const attachRemoveBtn = document.getElementById('attachment-file-remove');
+    if (!dropzone || !attachInput) return;
+
+    function refreshAttachmentUI() {
+      const file = attachInput.files && attachInput.files[0];
+      if (file) {
+        attachChipName.textContent = file.name;
+        attachChip.classList.remove('hidden');
+        attachLabel.classList.add('hidden');
+      } else {
+        attachChip.classList.add('hidden');
+        attachLabel.classList.remove('hidden');
+      }
+    }
+
+    attachInput.addEventListener('change', refreshAttachmentUI);
+
+    attachRemoveBtn.addEventListener('click', function (e) {
+      e.preventDefault();
+      attachInput.value = '';
+      refreshAttachmentUI();
+    });
+
+    ['dragenter', 'dragover'].forEach(function (evtName) {
+      dropzone.addEventListener(evtName, function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        dropzone.classList.add('drag-over');
+      });
+    });
+    ['dragleave', 'dragend'].forEach(function (evtName) {
+      dropzone.addEventListener(evtName, function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        dropzone.classList.remove('drag-over');
+      });
+    });
+    dropzone.addEventListener('drop', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      dropzone.classList.remove('drag-over');
+      const dropped = e.dataTransfer && e.dataTransfer.files;
+      if (dropped && dropped.length) {
+        attachInput.files = dropped;
+        refreshAttachmentUI();
+      }
+    });
+  }
+
+  function parseDetailsJson(raw) {
+    if (!raw) return [];
+    try {
+      const obj = JSON.parse(raw);
+      if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
+        return Object.keys(obj).map(function (k) { return { k: k, v: String(obj[k]) }; });
+      }
+    } catch (e) { /* fall through */ }
+    return [{ k: 'Details', v: raw }];
+  }
+
+  function computeRequestSignature(r) {
+    return [
+      r.uid, r.RequestID, r.Status, r.Title, r.Description, r.DetailsJSON,
+      r.attachment, r.dept, r.section, r.AprEmail, r.RequesterEmail,
+      r.RequesterName, r.AppSource
+    ].join('\u0001');
+  }
+
+  // ==========================================================================
+  // AUDIT TRAIL
+  // ==========================================================================
+  function loadAuditTrail(requestId) {
+    state.auditRequestId = requestId;
+    google.script.run
+      .withSuccessHandler(function (items) { renderAuditTrail(requestId, items); })
+      .withFailureHandler(function () { renderAuditTrail(requestId, null); })
+      .fetchAuditTrail(requestId, state.sessionToken);
+  }
+
+  function renderAuditTrail(requestId, items) {
+    if (state.auditRequestId !== requestId) return;
+    const list = document.getElementById('audit-list');
+    if (!list) return;
+
+    if (!items || items.length === 0) {
+      list.innerHTML = '<div class="audit-empty">No history yet — this is the first action on this request.</div>';
+      return;
+    }
+
+    list.innerHTML = items.map(function (a) {
+      const cls = (a.Action || '').toLowerCase() === 'approved' ? 'approved' : 'rejected';
+      return (
+        '<div class="audit-item">' +
+          '<span class="audit-dot ' + cls + '"></span>' +
+          '<div class="audit-main">' +
+            '<div class="audit-line"><b>' + escapeHtml(a.ActorName || a.ActorEmail || 'Someone') + '</b> ' + escapeHtml((a.Action || '').toLowerCase()) + ' this request</div>' +
+            (a.Comment && a.Comment !== 'No comment provided.' ? '<div class="audit-comment">' + escapeHtml(a.Comment) + '</div>' : '') +
+            '<div class="audit-time">' + relativeTime(a.Timestamp) + '</div>' +
+          '</div>' +
+        '</div>'
+      );
+    }).join('');
+  }
+
+  // ==========================================================================
+  // PREVIOUS / NEXT / CLOSE
+  // ==========================================================================
+  function goToNextRequest() {
+    const list = state.filteredRequests;
+    if (list.length < 2) return;
+    const idx = list.findIndex(function (r) { return r.uid === state.selectedUid; });
+    const nextIdx = idx === -1 ? 0 : (idx + 1) % list.length;
+    selectItem(list[nextIdx].uid);
+  }
+
+  function goToPreviousRequest() {
+    const list = state.filteredRequests;
+    if (list.length < 2) return;
+    const idx = list.findIndex(function (r) { return r.uid === state.selectedUid; });
+    const prevIdx = idx === -1 ? 0 : (idx - 1 + list.length) % list.length;
+    selectItem(list[prevIdx].uid);
+  }
+
+  function closeDetail() {
+    state.selectedUid = null;
+    Array.from(el.requestStack.children).forEach(function (card) { card.classList.remove('active'); });
+    el.detailContent.classList.add('hidden');
+    el.detailEmpty.classList.remove('hidden');
+    if (isMobileView()) showListView();
+  }
+
+  function updateToolbarNavState() {
+    const nextBtn = document.getElementById('detail-next-btn');
+    const prevBtn = document.getElementById('detail-prev-btn');
+    const disabled = state.filteredRequests.length < 2;
+    if (nextBtn) nextBtn.disabled = disabled;
+    if (prevBtn) prevBtn.disabled = disabled;
+  }
+
+  // ==========================================================================
+  // MOBILE NAVIGATION
+  // ==========================================================================
+  function isMobileView() {
+    return window.innerWidth < MOBILE_NAV_BREAKPOINT;
+  }
+
+  function showListView() {
+    el.splitView.classList.remove('show-detail');
+    state.mobileDetailActive = false;
+  }
+
+  function showDetailViewMobile() {
+    el.splitView.classList.add('show-detail');
+    state.mobileDetailActive = true;
+  }
+
+  // ==========================================================================
+  // APPROVE / REJECT / SIGN OFF
+  //
+  // REWRITTEN THIS REVISION — INSTANT-LOCK LIFECYCLE (2. + 3.):
+  //   1. CLICK — submitDecision() reads the comment/attachment, then calls
+  //      lockRequestUiInstantly() SYNCHRONOUSLY, before any google.script.run
+  //      call is even made:
+  //        - request.uid is added to state.blacklistedUids (see the header
+  //          comment for how far-reaching this is).
+  //        - the sidebar card fades out (CSS .removing) and is dropped from
+  //          the list after the animation.
+  //        - if this request's detail panel is open, its action row is
+  //          replaced with a static, disabled "Already Approved"/"Already
+  //          Rejected" label — no spinner (renderLockedActionDock()).
+  //      This is deliberately NOT "optimistic-then-maybe-revert" for the
+  //      happy path — see step 3.
+  //   2. IN FLIGHT — updateApprovalStatus() runs in the background. The UI
+  //      does not change further while this is pending; it already looks
+  //      finished.
+  //   3. SUCCESS — request.Status is set to match, logAuditEntry() and the
+  //      NEW syncApprovalToStaging() call both fire (fire-and-forget) with
+  //      the same comment, and a success toast confirms it. Nothing further
+  //      changes on screen — it already looked done.
+  //   4. FAILURE — unlike the success path, a genuine failure means NOTHING
+  //      was actually saved, so handleDecisionFailure() deliberately UNDOES
+  //      the optimistic lock (un-blacklists the uid, restores the card, and
+  //      re-renders real, clickable action buttons if the panel is still
+  //      open) and shows a persistent error toast. This is a small,
+  //      intentional departure from "strictly disable forever": the
+  //      instructions ask for an unbreakable lock on the happy path so a
+  //      user can never double-submit, but a request that failed to save
+  //      must remain actionable — permanently locking it out on failure
+  //      would silently strand a pending approval with no way to retry it.
+  // ==========================================================================
+  function submitDecision(request, action, opts) {
+    opts = opts || {};
+
+    // Guard against a stray double-click/double-submit.
+    if (state.blacklistedUids.has(request.uid)) return;
+
+    const approveBtn = document.getElementById('approve-btn');
+    const rejectBtn = document.getElementById('reject-btn');
+    const signOffBtn = document.getElementById('signoff-btn');
+    const primaryBtn = signOffBtn || (action === 'Approved' ? approveBtn : rejectBtn);
+    if (primaryBtn && primaryBtn.disabled) return;
+
+    const commentEl = document.getElementById('comment-input');
+    const fileInputEl = document.getElementById('decision-attachment-input');
+
+    const comment = Object.prototype.hasOwnProperty.call(opts, 'comment')
+      ? opts.comment
+      : (commentEl ? commentEl.value : '');
+
+    const file = Object.prototype.hasOwnProperty.call(opts, 'attachmentFile')
+      ? opts.attachmentFile
+      : ((fileInputEl && fileInputEl.files && fileInputEl.files[0]) || null);
+
+    // ---- INSTANT UI LOCK — see header comment. Happens before any network
+    // call, so the user sees the "done" state the moment they click. ----
+    lockRequestUiInstantly(request, action);
+
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = function () {
+        const base64 = String(reader.result).split(',')[1] || '';
+        proceedWithDecision(request, action, comment, {
+          name: file.name,
+          mimeType: file.type || 'application/octet-stream',
+          base64: base64
+        });
+      };
+      reader.onerror = function () {
+        proceedWithDecision(request, action, comment, null);
+      };
+      reader.readAsDataURL(file);
+    } else {
+      proceedWithDecision(request, action, comment, null);
+    }
+  }
+
+  /**
+   * (2. Button State) + (3. Real-Time Syncing / blacklist)
+   * Runs synchronously the instant a decision is made — see the big comment
+   * above submitDecision() for the full lifecycle.
+   */
+  function lockRequestUiInstantly(request, action) {
+    state.blacklistedUids.add(request.uid);
+
+    const cardEl = document.getElementById('deck-card-' + request.uid);
+    if (cardEl) {
+      cardEl.classList.add('removing');
+      // Let the existing fade/scale-out transition play, then actually drop
+      // the row from the rendered list. Any refresh that lands in the
+      // meantime is already blocked from re-showing this uid by the
+      // blacklist check in applyFilters(), so this is purely cosmetic
+      // sequencing, not a correctness requirement.
+      setTimeout(function () { applyFilters(); }, CARD_REMOVE_ANIMATION_MS);
+    } else {
+      applyFilters();
+    }
+    recomputeNotifBadgeFromState();
+
+    if (state.selectedUid === request.uid) {
+      renderLockedActionDock(action);
+    }
+  }
+
+  /**
+   * (2.) Swaps the action dock's buttons/comment box/attachment picker for
+   * a single static, disabled "Already Approved"/"Already Rejected" label.
+   * No spinner, no further interaction possible on this request for the
+   * rest of the session.
+   */
+  function renderLockedActionDock(action) {
+    const dock = document.querySelector('.action-dock');
+    if (!dock) return;
+    const label = action === 'Approved' ? 'Response has been recorded' : 'Response has been recorded';
+    const colorVar = action === 'Approved' ? 'var(--green)' : 'var(--red)';
+    dock.innerHTML =
+      '<div class="decided-banner locked-banner" style="color:' + colorVar + '">' +
+        '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" width="15" height="15" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
+        '<span>' + escapeHtml(label) + '</span>' +
+      '</div>';
+  }
+
+  function proceedWithDecision(request, action, comment, attachmentData) {
+    google.script.run
+      .withSuccessHandler(function () {
+        // Confirmed saved. The UI already looks finished (locked in step 1
+        // above) — this just brings the underlying data model in sync and
+        // fires the two fire-and-forget follow-up writes.
+        request.Status = action;
+
+        // logAuditEntry — unchanged, still fire-and-forget.
+        google.script.run
+          .withFailureHandler(function (err) {
+            showToast('error', 'Decision saved, but the audit log entry failed: ' + (err.message || err));
+          })
+          .logAuditEntry(request.RequestID, action, comment, state.sessionToken, request.uid);
+
+        // NEW (1. Audit Logs & Staging Tables Sync) — this call was
+        // previously missing entirely on the client. It pushes the SAME
+        // comment (and, via the backend's al_attachment mapping, the
+        // request's attachment) into StagingAllReq / StagingEntries /
+        // StagingXC, matching whichever table the request's AppSource
+        // routes to. Fire-and-forget: a failure here can never look like a
+        // failed approve/reject, since CentralizedApproval is already
+        // safely written by this point.
+        google.script.run
+          .withFailureHandler(function (err) {
+            console.warn('Staging sync failed (non-fatal, decision already saved): ' + (err.message || err));
+          })
+          .syncApprovalToStaging(request.RequestID, action, comment, state.sessionToken, request.uid);
+
+        showToast('success', 'Request ' + request.RequestID + ' ' + action.toLowerCase() + '.');
+      })
+      .withFailureHandler(function (err) {
+        handleDecisionFailure(request, action, err);
+      })
+      .updateApprovalStatus(request.RequestID, action, attachmentData, state.sessionToken, request.uid, comment);
+  }
+
+  /**
+   * (4. of the lifecycle above) A genuine save failure — nothing was
+   * actually written. Deliberately UNDOES the optimistic lock so the
+   * approver can retry, rather than permanently stranding the request as
+   * "locked" with no actionable buttons and no way to save the decision.
+   */
+  function handleDecisionFailure(request, action, err) {
+    state.blacklistedUids.delete(request.uid);
+
+    const cardEl = document.getElementById('deck-card-' + request.uid);
+    if (cardEl) cardEl.classList.remove('removing');
+    applyFilters();
+    recomputeNotifBadgeFromState();
+
+    if (state.selectedUid === request.uid) {
+      renderDetail(request); // request.Status is still 'Pending' — redraws real, clickable buttons
+    }
+
+    showToast('error', 'Action failed — please try again: ' + (err && err.message ? err.message : err));
+  }
+
+  // ==========================================================================
+  // NOTIFICATIONS
+  // ==========================================================================
+  function checkNotifications() {
+    google.script.run
+      .withSuccessHandler(renderNotifications)
+      .withFailureHandler(function () { /* fail silently for notifications */ })
+      .fetchNotifications(state.sessionToken);
+  }
+
+  function notifHeaderState(status) {
+    const s = (status || 'Pending').toLowerCase();
+    if (s === 'approved') return { label: 'Approved', cls: 'state-approved' };
+    if (s === 'rejected') return { label: 'Rejected', cls: 'state-rejected' };
+    return { label: 'New Request', cls: 'state-new' };
+  }
+
+  function renderNotifications(items) {
+    // NEW (3.): never let the bell reference a request this session already
+    // locked, even if the server payload still lists it as pending.
+    items = (items || []).filter(function (r) { return !state.blacklistedUids.has(r.uid); });
+    items.forEach(function (r) { state.lastNotifIds.add(r.uid); });
+
+    if (!state.notifBadgeSuppressed) {
+      updateNotifBadge(items.filter(function (r) { return (r.Status || '').toLowerCase() === 'pending'; }).length);
+    }
+
+    el.notifList.innerHTML = items.length ? items.map(function (r) {
+      const headerState = notifHeaderState(r.Status);
+      return (
+        '<div class="popover-item" data-uid="' + escapeAttr(r.uid) + '">' +
+          '<div class="popover-item-header ' + headerState.cls + '">' + headerState.label + '</div>' +
+          '<div class="popover-item-sub">' +
+            '<span class="popover-sub-text">' + escapeHtml(r.Title) + ' • ' + escapeHtml(r.RequesterName) + '</span>' +
+            '<span class="popover-sub-time">' + relativeTime(r.CreatedAt) + '</span>' +
+          '</div>' +
+        '</div>'
+      );
+    }).join('') : '<div class="popover-empty">You\'re all caught up.</div>';
+
+    Array.from(el.notifList.querySelectorAll('.popover-item')).forEach(function (node) {
+      node.addEventListener('click', function () {
+        selectItem(node.dataset.uid);
+        el.notifPopover.classList.add('hidden');
+      });
+    });
+  }
+
+  function bumpNotifications() { checkNotifications(); }
+
+  function recomputeNotifBadgeFromState() {
+    if (state.notifBadgeSuppressed) return;
+    // NEW (3.): exclude locally-actioned requests from the pending count.
+    const pendingCount = state.requests.filter(function (r) {
+      return !state.blacklistedUids.has(r.uid) && (r.Status || '').toLowerCase() === 'pending';
+    }).length;
+    updateNotifBadge(pendingCount);
+  }
+
+  function updateNotifBadge(count) {
+    if (count > 0) {
+      el.notifBadge.textContent = count > 99 ? '99+' : String(count);
+      el.notifBadge.classList.remove('hidden');
+    } else {
+      el.notifBadge.textContent = '0';
+      el.notifBadge.classList.add('hidden');
+    }
+  }
+
+  function clearAllNotifications() {
+    state.lastNotifIds.clear();
+    el.notifList.innerHTML = '<div class="popover-empty">You\'re all caught up.</div>';
+    state.notifBadgeSuppressed = true;
+    updateNotifBadge(0);
+  }
+
+  // ==========================================================================
+  // PROFILE + SIGN OUT
+  // ==========================================================================
+  function renderProfile(auth) {
+    el.profileName.textContent = auth.name;
+    el.profileRole.textContent = auth.role + (auth.department ? ' · ' + auth.department : '');
+    el.profileAvatar.textContent = initials(auth.name);
+    el.profileMenuEmail.textContent = auth.email;
+  }
+
+  function initials(name) {
+    return (name || '?').trim().split(/\s+/).slice(0, 2).map(function (p) { return p[0]; }).join('').toUpperCase();
+  }
+
+  function toggleProfileMenu(forceState) {
+    const isOpen = forceState !== undefined ? forceState : el.profileMenu.classList.contains('hidden');
+    el.profileMenu.classList.toggle('hidden', !isOpen);
+    el.profileChip.setAttribute('aria-expanded', String(isOpen));
+  }
+
+  function performSignOut() {
+    if (el.signOutBtn.disabled) return; // guard against a double-click
+    el.signOutBtn.disabled = true;
+    const labelSpan = el.signOutBtn.querySelector('.menu-item-label');
+    if (labelSpan) labelSpan.textContent = 'Signing out…';
+
+    toggleProfileMenu(false);
+
+    const signedInEmail = state.user && state.user.email;
+
+    google.script.run
+      .withSuccessHandler(function () { /* no-op — proceeding regardless, see note above */ })
+      .withFailureHandler(function () { /* no-op — still sign out locally */ })
+      .signOut(state.sessionToken);
+
+    if (window.google && window.google.accounts && window.google.accounts.id) {
+      google.accounts.id.disableAutoSelect();
+      if (signedInEmail) {
+        try {
+          google.accounts.id.revoke(signedInEmail, function () { /* revoked (or already was) */ });
+        } catch (e) { /* revoke is best-effort — never block sign-out on it */ }
+      }
+    }
+
+    if (state.pollHandle) clearInterval(state.pollHandle);
+    state.user = null;
+    state.sessionToken = null;
+    state.requests = [];
+    state.filteredRequests = [];
+    state.selectedUid = null;
+    state.searchQuery = '';
+    state.activeFilter = 'All';
+    state.notifBadgeSuppressed = false;
+    state.signInInitialized = false;
+    state.blacklistedUids = new Set(); // NEW: fresh session, fresh blacklist
+    el.searchInput.value = '';
+    el.detailEmpty.classList.remove('hidden');
+    el.detailContent.classList.add('hidden');
+    updateNotifBadge(0);
+    collapseMobileSearch();
+    closeLightbox();
+    showListView();
+    if (el.hoverNav) el.hoverNav.classList.remove('expanded');
+
+    el.appShell.classList.add('hidden');
+    resetAuthGate('You\u2019re signed out.');
+    el.authSpinner.classList.add('hidden');
+    el.authStatusText.classList.add('muted');
+    renderAuthOptions({ mode: 'signedOut' });
+
+    // Restore the button for next time this shell is shown (a future
+    // sign-in will re-render the whole app-shell from scratch anyway, but
+    // this keeps the DOM node itself consistent if it's ever reused).
+    el.signOutBtn.disabled = false;
+    el.signOutBtn.classList.remove('is-loading-text');
+    if (labelSpan) labelSpan.textContent = 'Sign out';
+  }
+
+  // ==========================================================================
+  // MOBILE SEARCH OVERLAY
+  // ==========================================================================
+  function expandMobileSearch() {
+    if (window.innerWidth > MOBILE_SEARCH_BREAKPOINT) return;
+    el.topbarSearch.classList.add('expanded');
+    el.searchInput.focus();
+  }
+
+  function collapseMobileSearch() {
+    el.topbarSearch.classList.remove('expanded');
+  }
+
+  // ==========================================================================
+  // GLOBAL EVENTS
+  // ==========================================================================
+  function bindGlobalEvents() {
+    el.searchInput.addEventListener('input', function (e) {
+      state.searchQuery = e.target.value;
+      applyFilters();
+    });
+
+    el.mobileSearchToggle.addEventListener('click', function (e) {
+      e.stopPropagation();
+      if (window.innerWidth <= MOBILE_SEARCH_BREAKPOINT) {
+        expandMobileSearch();
+      } else {
+        el.searchInput.focus();
+      }
+    });
+
+    el.mobileSearchClose.addEventListener('click', function (e) {
+      e.stopPropagation();
+      collapseMobileSearch();
+    });
+
+    document.addEventListener('keydown', function (e) {
+      if (e.key !== 'Escape') return;
+      if (el.topbarSearch.classList.contains('expanded')) collapseMobileSearch();
+      if (!el.lightboxOverlay.classList.contains('hidden')) closeLightbox();
+      if (el.hoverNav && el.hoverNav.classList.contains('expanded')) el.hoverNav.classList.remove('expanded');
+    });
+
+    // Sync guards against overlapping clicks — click -> disabled+spinning ->
+    // re-enabled the moment the fetch settles, success or failure. Manual
+    // syncs always forceRefresh (bypass Code.gs's short cache).
+    el.syncBtn.addEventListener('click', function () {
+      if (state.isSyncing) return;
+      loadApprovalData({ forceRefresh: true });
+    });
+    el.themeToggle.addEventListener('click', toggleTheme);
+
+    el.notifBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      toggleProfileMenu(false);
+      el.notifPopover.classList.toggle('hidden');
+      state.notifBadgeSuppressed = true;
+      updateNotifBadge(0);
+    });
+
+    if (el.notifClearBtn) {
+      el.notifClearBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        clearAllNotifications();
+      });
+    }
+
+    el.profileChip.addEventListener('click', function (e) {
+      e.stopPropagation();
+      el.notifPopover.classList.add('hidden');
+      toggleProfileMenu();
+    });
+
+    el.signOutBtn.addEventListener('click', performSignOut);
+
+    el.lightboxClose.addEventListener('click', closeLightbox);
+    el.lightboxOverlay.addEventListener('click', function (e) {
+      if (e.target === el.lightboxOverlay) closeLightbox();
+    });
+
+    document.addEventListener('click', function (e) {
+      if (!el.notifPopover.contains(e.target) && e.target !== el.notifBtn) {
+        el.notifPopover.classList.add('hidden');
+      }
+      if (!el.profileMenu.contains(e.target) && !el.profileChip.contains(e.target)) {
+        toggleProfileMenu(false);
+      }
+      if (el.topbarSearch.classList.contains('expanded') && !el.topbarSearch.contains(e.target)) {
+        collapseMobileSearch();
+      }
+    });
+
+    window.addEventListener('resize', function () {
+      if (!isMobileView() && state.mobileDetailActive) {
+        el.splitView.classList.remove('show-detail');
+        state.mobileDetailActive = false;
+      }
+    });
+  }
+
+  /**
+   * Toggles el.syncBtn's disabled state, state.isSyncing, and the spin
+   * animation together — a click while a sync is already in flight is a
+   * genuine no-op (guarded in bindGlobalEvents above), not just visually
+   * spinning twice.
+   */
+  function setSyncSpinning(isSpinning) {
+    state.isSyncing = isSpinning;
+    el.syncBtn.disabled = isSpinning;
+    const icon = el.syncBtn.querySelector('.sync-icon');
+    icon.classList.toggle('spinning', isSpinning);
+  }
+
+  // ==========================================================================
+  // THEME
+  // ==========================================================================
+  function applyStoredTheme() {
+    const preferred = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.body.setAttribute('data-theme', preferred);
+  }
+
+  function toggleTheme() {
+    const current = document.body.getAttribute('data-theme');
+    document.body.setAttribute('data-theme', current === 'dark' ? 'light' : 'dark');
+  }
+
+  // ==========================================================================
+  // TOASTS — Sonner-style, top-right
+  // ==========================================================================
+  function showToast(type, message) {
+    const toast = document.createElement('div');
+    toast.className = 'toast toast-' + type;
+    toast.innerHTML =
+      '<span class="toast-icon">' + toastIconSvg(type) + '</span>' +
+      '<span class="toast-msg">' + escapeHtml(message) + '</span>';
+    el.toastContainer.appendChild(toast);
+
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () { toast.classList.add('toast-in'); });
+    });
+
+    setTimeout(function () {
+      toast.classList.remove('toast-in');
+      toast.classList.add('toast-out');
+      setTimeout(function () { toast.remove(); }, 220);
+    }, 3200);
+  }
+
+  function toastIconSvg(type) {
+    if (type === 'success') {
+      return '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M5 12.5l4.5 4.5L19 7" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    }
+    if (type === 'error') {
+      return '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>';
+    }
+    return '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.8"/><path d="M12 8v5M12 16h.01" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
+  }
+
+  // ==========================================================================
+  // HELPERS
+  // ==========================================================================
+  function statusPillHtml(status) {
+    const s = (status || 'Pending');
+    return '<span class="status-pill status-' + s.toLowerCase() + '">' + escapeHtml(s) + '</span>';
+  }
+
+  function relativeTime(iso) {
+    if (!iso) return '—';
+    const then = new Date(iso).getTime();
+    if (isNaN(then)) return '—';
+    const diffMs = Date.now() - then;
+    const mins = Math.floor(diffMs / 60000);
+    if (mins < 1) return 'just now';
+    if (mins < 60) return mins + 'm ago';
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return hrs + 'h ago';
+    const days = Math.floor(hrs / 24);
+    if (days < 7) return days + 'd ago';
+    return new Date(iso).toLocaleDateString();
+  }
+
+  function escapeHtml(str) {
+    return String(str == null ? '' : str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function escapeAttr(str) { return escapeHtml(str); }
+
+})();
+</script>
