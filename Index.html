@@ -1,174 +1,211 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
   <base target="_top">
-  <meta charset="UTF-8">
+  <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
   <title>Approval Dashboard</title>
+  <link rel="preconnect" href="https://cdn.jsdelivr.net">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource-variable/geist-sans/wght.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource-variable/geist-mono/wght.css">
+  <link rel="manifest" href="<?= getWebAppBaseUrl_() ?>?pwa=manifest">
+  <meta name="theme-color" content="#2f5cf0">
   <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', function () {
+        navigator.serviceWorker.register('<?= getWebAppBaseUrl_() ?>?pwa=sw').catch(function (err) {
+          console.warn('SW registration failed:', err);
+        });
+      });
+    }
+    window.addEventListener('beforeinstallprompt', function (e) {
+      e.preventDefault();
+      window.__deferredInstallPrompt = e;
+    });
+  </script>
   <?!= include('Styles'); ?>
 </head>
-<body data-theme="light">
+<body>
 
-  <!-- ===================== AUTH GATE ===================== -->
+  <!-- ============================== AUTH GATE ============================== -->
   <div id="auth-gate" class="auth-gate">
-  <div class="auth-card" id="auth-card" data-client-id="<?= getOAuthClientId() ?>">
-    <div class="auth-spinner" id="auth-spinner"></div>
-    <p class="auth-status-text" id="auth-status-text">Checking your session…</p>
-    <div id="auth-signin-wrap" class="auth-signin-wrap hidden">
-      <div id="auth-signin-btn"></div>
+    <div id="auth-card" class="auth-card" data-client-id="<?= getOAuthClientId() ?>">
+      <div id="auth-spinner" class="auth-spinner"></div>
+      <p id="auth-status-text" class="auth-status-text">Checking your session&hellip;</p>
+      <div id="auth-signin-wrap" class="auth-signin-wrap hidden">
+        <button id="auth-signin-btn" type="button" class="hidden"></button>
+      </div>
     </div>
   </div>
-</div>
 
-  <!-- ===================== APP SHELL ===================== -->
+  <!-- ============================== APP SHELL ============================== -->
   <div id="app-shell" class="app-shell hidden">
 
-    <!-- ===================== HOVER NAV SIDEBAR (5.) =====================
-         Collapsed to a thin edge rail; hovering (or, on touch devices,
-         tapping the rail — see bindHoverNav() in JavaScript.html) expands
-         a panel of external-app quick links plus a dedicated Log Out
-         option. Links are populated from getQuickLinks() in Code.gs so no
-         credentials ever reach the client. -->
-    <nav id="hover-nav" class="hover-nav" aria-label="Quick links">
-      <div class="hover-nav-rail" id="hover-nav-rail" aria-label="Open quick links" role="button" tabindex="0">
-        <span class="hover-nav-dot" aria-hidden="true"></span>
-      </div>
-      <div class="hover-nav-panel">
-        <div class="hover-nav-title">Quick Links</div>
-        <div id="hover-nav-links" class="hover-nav-links">
-          <div class="hover-nav-loading">Loading…</div>
+    <!-- ---- Top bar ---- -->
+    <header class="topbar surface-card">
+      <div class="topbar-brand">
+        <div class="brand-icon">
+          <svg fill="#000000" width="256px" height="256px" viewBox="0 0 24.00 24.00" id="file-folder-approved-2" data-name="Flat Color" xmlns="http://www.w3.org/2000/svg" class="icon flat-color" stroke="#000000" stroke-width="0.192" transform="matrix(1, 0, 0, 1, 0, 0)rotate(0)"><g id="SVGRepo_bgCarrier" stroke-width="0"></g><g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g><g id="SVGRepo_iconCarrier"><path id="secondary" d="M19.71,4.29l-2-2A1,1,0,0,0,17,2H6A2,2,0,0,0,4,4v7a1,1,0,0,0,1,1H19a1,1,0,0,0,1-1V5A1,1,0,0,0,19.71,4.29Z" style="fill: #2ca9bc;"></path><path id="primary" d="M12.51,18.07A6.63,6.63,0,0,1,18,14a6.43,6.43,0,0,1,4,1V12a2,2,0,0,0-2-2H11.4L9.7,8.29A1,1,0,0,0,9,8H4a2,2,0,0,0-2,2V20a2,2,0,0,0,2,2h8.18A6.18,6.18,0,0,1,12.51,18.07Z" style="fill: #000000;"></path><path id="secondary-2" data-name="secondary" d="M17,22a1,1,0,0,1-.71-.29l-2-2a1,1,0,0,1,1.42-1.42L17,19.59l3.29-3.3a1,1,0,0,1,1.42,1.42l-4,4A1,1,0,0,1,17,22Z" style="fill: #2ca9bc;"></path><path id="primary-2" data-name="primary" d="M17,4a1,1,0,0,0,1,1h2a1,1,0,0,0-.28-.71l-2-2A1,1,0,0,0,17,2Z" style="fill: #000000;"></path></g></svg>
         </div>
-        <!-- <div class="hover-nav-divider"></div>
-        <a class="hover-nav-link hover-nav-logout" href="https://accounts.google.com/Logout" target="_blank" rel="noopener">
-          <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-            <path d="M15 17l5-5-5-5M20 12H9M12 19H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-          <span>Log Out (Google)</span>
-        </a> -->
+        <div class="brand-text">
+          <span class="brand-title">Approval Dashboard</span>
+        </div>
       </div>
-    </nav>
 
-    <header class="topbar">
-      <div class="topbar-left">
-        <div class="app-icon" aria-hidden="true">
+      <!-- <div class="topbar-search">
+        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"/>
+          <path d="M21 21l-4.3-4.3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+        <input id="search-input" type="text" placeholder="Search requests, requesters, IDs…">
+        <span class="kbd-hint">⌘K</span>
+      </div> -->
+
+       <div class="topbar-actions">
+        <button id="sync-btn" type="button" class="icon-btn" aria-label="Sync now">
           <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M9 12.5l2 2 4-4.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-            <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.8"/>
-          </svg>
-        </div>
-        <span class="app-title">Approval Dashboard</span>
-      </div>
-
-      <div class="topbar-search" id="topbar-search">
-        <button class="search-icon-btn" id="mobile-search-toggle" aria-label="Open search" type="button">
-          <svg class="search-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-            <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="1.8"/>
-            <path d="M21 21l-4.3-4.3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+            <path d="M4 12a8 8 0 0 1 14.5-4.5M20 12a8 8 0 0 1-14.5 4.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+            <path d="M18.5 3v5h-5M5.5 21v-5h5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
         </button>
-        <input id="search-input" type="text" placeholder="Search title, requester, or request ID" aria-label="Search requests">
-        <button class="search-close-btn hidden" id="mobile-search-close" aria-label="Close search" type="button">
-          <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-            <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-          </svg>
-        </button>
-      </div>
-
-      <div class="topbar-right">
-        <button id="sync-btn" class="icon-btn" title="Sync now" aria-label="Sync now">
-          <svg class="sync-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M4 12a8 8 0 0 1 14.9-4M20 12a8 8 0 0 1-14.9 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-            <path d="M18 4v5h-5M6 20v-5h5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-        </button>
-
         <div class="notif-wrap">
-          <button id="notif-btn" class="icon-btn" title="Notifications" aria-label="Notifications">
+          <button id="notif-btn" type="button" class="icon-btn" aria-label="Notifications">
             <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-              <path d="M13.7 21a2 2 0 0 1-3.4 0" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+              <path d="M6 9a6 6 0 0 1 12 0v4.5l1.6 3H4.4L6 13.5V9z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+              <path d="M9.5 19a2.5 2.5 0 0 0 5 0" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
             </svg>
             <span id="notif-badge" class="badge hidden">0</span>
           </button>
           <div id="notif-popover" class="popover hidden">
             <div class="popover-header">
-              <div class="popover-title">Recent activity</div>
-              <button id="notif-clear-btn" class="notif-clear-btn" type="button">Clear all</button>
+              <span class="popover-title">Notifications</span>
+              <button id="notif-clear-btn" type="button" class="popover-clear-btn">Clear</button>
             </div>
-            <div id="notif-list" class="popover-list"></div>
+            <div id="notif-list" class="popover-list">
+              <div class="popover-loading">Loading…</div>
+            </div>
           </div>
         </div>
 
-        <button id="theme-toggle" class="icon-btn" title="Toggle theme" aria-label="Toggle dark mode">
-          <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <circle cx="12" cy="12" r="4.5" stroke="currentColor" stroke-width="1.8"/>
-            <path d="M12 2.5v2M12 19.5v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2.5 12h2M19.5 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-          </svg>
-        </button>
-
-        <div class="profile-wrap">
-          <button class="profile-chip" id="profile-chip" aria-haspopup="true" aria-expanded="false">
-            <div class="avatar" id="profile-avatar">?</div>
-            <div class="profile-meta">
-              <span class="profile-name" id="profile-name">—</span>
-              <span class="profile-role" id="profile-role">—</span>
-            </div>
-            <svg class="chevron" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-              <path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+        <div class="links-wrap">
+          <button id="links-btn" type="button" class="icon-btn" aria-label="Quick links">
+            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M9.5 14.5l5-5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+              <path d="M11 8l1-1a3.5 3.5 0 0 1 5 5l-1 1M13 16l-1 1a3.5 3.5 0 0 1-5-5l1-1" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
           </button>
-          <div id="profile-menu" class="popover profile-menu hidden">
-            <div class="profile-menu-header">
-              <span id="profile-menu-email" class="profile-menu-email">—</span>
+          <div id="links-popover" class="popover links-popover hidden">
+            <div class="popover-header"><span class="popover-title">Quick Links</span></div>
+            <div id="quick-links-list" class="popover-list">
+              <div class="popover-loading">Loading…</div>
             </div>
-            <button id="signout-btn" class="menu-item">
-              <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-                <path d="M15 17l5-5-5-5M20 12H9M12 19H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-              </svg>
-              Sign out
-            </button>
           </div>
+        </div>
+
+        <div class="profile-wrap">
+          <button id="profile-chip" type="button" class="profile-chip">
+            <div id="profile-avatar" class="avatar">--</div>
+            <div class="profile-meta">
+              <span id="profile-name" class="profile-name">&nbsp;</span>
+              <span id="profile-role" class="profile-role">&nbsp;</span>
+            </div>
+          </button>
         </div>
       </div>
     </header>
-    
 
-    <main class="split-view" id="split-view">
-      <aside class="sidebar">
-        <div class="filter-pills" id="filter-pills" role="tablist" aria-label="Filter by source"></div>
-        <div class="request-stack" id="request-stack"></div>
-        <div id="sidebar-empty" class="sidebar-empty hidden">
-          <p>No requests match your filters.</p>
+    <!-- ---- Body ---- -->
+    <div id="app-body" class="app-body">
+
+      <!-- Left sidebar: request list -->
+      <aside class="left-sidebar surface-card">
+        <div class="sidebar-heading">
+          <div class="sidebar-heading-left">
+            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <rect x="4" y="3" width="16" height="18" rx="2.5" stroke="currentColor" stroke-width="1.6"/>
+              <path d="M8 8h8M8 12h8M8 16h5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            </svg>
+            <span>Pending Requests</span>
+          </div>
+          <span id="sidebar-count" class="count-badge">0</span>
         </div>
+
+        <div id="filter-pills" class="filter-pills"></div>
+
+        <div class="sidebar-search">
+          <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"/>
+            <path d="M21 21l-4.3-4.3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+          <input id="sidebar-search-input" type="text" placeholder="Filter requests…">
+        </div>
+
+        <div id="request-stack" class="request-stack"></div>
+        <div id="sidebar-empty" class="sidebar-empty hidden">No requests match your filters.</div>
       </aside>
 
-      <section class="detail-view" id="detail-view">
-        <div class="detail-empty" id="detail-empty">
-          <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" width="44" height="44" aria-hidden="true">
-            <rect x="4" y="3" width="16" height="18" rx="2.5" stroke="currentColor" stroke-width="1.5"/>
-            <path d="M8 8h8M8 12h8M8 16h5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-          </svg>
-          <p>Select a request to review</p>
+      <!-- Center + right columns -->
+      <div class="main-and-right">
+        <div class="main-and-right-row">
+
+          <section class="center-column">
+            <div id="detail-empty" class="detail-empty">
+              <svg width="40" height="40" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <rect x="4" y="3" width="16" height="18" rx="2.5" stroke="currentColor" stroke-width="1.4"/>
+                <path d="M8 8h8M8 12h8M8 16h5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+              </svg>
+              <p>Select a request to view its details</p>
+            </div>
+            <div id="detail-content" class="detail-content hidden"></div>
+          </section>
+
+          <aside id="right-column" class="right-column hidden">
+            <div class="info-card surface-card">
+              <div class="info-card-title">
+                <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <circle cx="12" cy="8" r="3.5" stroke="currentColor" stroke-width="1.6"/>
+                  <path d="M5 20c0-3.5 3-6 7-6s7 2.5 7 6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+                </svg>
+                <span id="requester-card-title">Requester Information</span>
+              </div>
+              <div id="requester-body"></div>
+            </div>
+
+            <div class="info-card surface-card">
+              <div class="info-card-title">
+                <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.7"/>
+                  <path d="M12 7.5V12l3.2 2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                <span>Timeline</span>
+              </div>
+              <div id="audit-timeline" class="timeline">
+                <div class="timeline-loading">No request selected.</div>
+              </div>
+            </div>
+          </aside>
+
         </div>
 
-        <div id="detail-content" class="detail-content hidden">
-          <!-- Populated by JavaScript.html -->
-        </div>
-      </section>
-    </main>
+        <div id="action-dock" class="action-dock surface-card hidden"></div>
+      </div>
+
+    </div>
   </div>
 
-  <!-- Sonner-style toasts render top-right; see #toast-container in Styles.html/JavaScript.html -->
-  <div id="toast-container" class="toast-container" aria-live="polite"></div>
-
-  <!-- ============ Large attachment lightbox (click-to-enlarge) ============ -->
+  <!-- ============================== LIGHTBOX ============================== -->
   <div id="attachment-lightbox" class="lightbox-overlay hidden">
-    <button id="lightbox-close" class="lightbox-close" aria-label="Close preview" type="button">
-      <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    <img id="lightbox-image" class="lightbox-image" alt="Attachment preview">
+    <button id="lightbox-close" type="button" class="lightbox-close" aria-label="Close">
+      <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"/>
+      </svg>
     </button>
-    <img id="lightbox-image" class="lightbox-image" src="" alt="Attachment preview">
   </div>
+
+  <!-- ============================== TOASTS ============================== -->
+  <div id="toast-container" class="toast-container"></div>
 
   <?!= include('JavaScript'); ?>
 </body>

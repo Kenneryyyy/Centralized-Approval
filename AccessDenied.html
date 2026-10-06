@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>Access Denied</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body {
+      height: 100%; margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: #f4f5f7; color: #14161a;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .card {
+      max-width: 420px; width: 100%; margin: 24px;
+      background: #ffffff; border: 1px solid #e6e7eb; border-radius: 14px;
+      box-shadow: 0 16px 36px rgba(16,16,20,0.14);
+      padding: 36px 32px; text-align: center;
+    }
+    .icon {
+      width: 56px; height: 56px; border-radius: 50%;
+      background: rgba(224,57,62,0.1); color: #e0393e;
+      display: flex; align-items: center; justify-content: center;
+      margin: 0 auto 18px;
+    }
+    .icon svg { width: 26px; height: 26px; }
+    h1 { font-size: 19px; font-weight: 750; margin: 0 0 10px; letter-spacing: -0.01em; }
+    p { font-size: 14px; color: #6b7079; line-height: 1.55; margin: 0 0 6px; }
+    .email { font-weight: 650; color: #14161a; word-break: break-all; }
+    .actions { margin-top: 24px; display: flex; flex-direction: column; gap: 10px; }
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center;
+      padding: 11px 20px; border-radius: 999px; border: none; cursor: pointer;
+      font-size: 13.5px; font-weight: 700; text-decoration: none;
+    }
+    .btn-primary { background: #2f5cf0; color: #fff; }
+    .btn-primary:hover { filter: brightness(1.08); }
+    .btn-secondary { background: transparent; color: #2f5cf0; border: 1px solid #d7d9df; }
+    .btn-secondary:hover { background: rgba(20,22,26,0.04); }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">
+      <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.8"/>
+        <path d="M8.5 8.5l7 7M15.5 8.5l-7 7" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>
+      </svg>
+    </div>
+    <h1>Access Denied</h1>
+    <p>Your Google account is not authorized to use this application.</p>
+    <p>If you believe this is a mistake, please contact your administrator to request access.</p>
+
+    <div class="actions">
+      <a class="btn btn-secondary" href="https://accounts.google.com/AccountChooser?continue=<?= encodeURIComponent(ScriptApp.getService().getUrl()) ?>">
+        Switch Google Account
+      </a>
+    </div>
+  </div>
+</body>
+</html>
