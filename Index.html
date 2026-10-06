@@ -53,6 +53,12 @@
         </div>
       </div>
 
+      <!-- Inbox / Table view switch -->
+      <div id="view-switch" class="segmented view-switch" role="tablist" aria-label="View">
+        <button type="button" class="segmented-btn active" data-view="inbox" role="tab" aria-selected="true">Inbox</button>
+        <button type="button" class="segmented-btn" data-view="table" role="tab" aria-selected="false">Table</button>
+      </div>
+
       <!-- <div class="topbar-search">
         <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
           <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"/>
@@ -104,14 +110,43 @@
         </div>
 
         <div class="profile-wrap">
-          <button id="profile-chip" type="button" class="profile-chip">
+          <button id="profile-chip" type="button" class="profile-chip" aria-haspopup="menu" aria-expanded="false">
             <div id="profile-avatar" class="avatar">--</div>
             <div class="profile-meta">
               <span id="profile-name" class="profile-name">&nbsp;</span>
               <span id="profile-role" class="profile-role">&nbsp;</span>
             </div>
+            <svg class="chevron" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
           </button>
+          <div id="profile-menu" class="popover profile-menu hidden" role="menu">
+            <div class="profile-menu-header">
+              <div id="profile-menu-name" class="profile-menu-name">&nbsp;</div>
+              <div id="profile-menu-email" class="profile-menu-email">&nbsp;</div>
+            </div>
+            <div id="profile-menu-digest" class="profile-menu-digest">Setting up daily reminders&hellip;</div>
+            <button id="switch-account-btn" type="button" class="menu-item menu-item-neutral" role="menuitem">
+              <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M7 7h11l-3-3M17 17H6l3 3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              <span>Switch Google Account</span>
+            </button>
+            <button id="menu-signout-btn" type="button" class="menu-item" role="menuitem">
+              <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 16l4-4-4-4M14 12H4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              <span>Sign out</span>
+            </button>
+          </div>
         </div>
+
+        <button id="logout-btn" type="button" class="logout-pill" aria-label="Log out">
+          <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 16l4-4-4-4M14 12H4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span>Log out</span>
+        </button>
       </div>
     </header>
 
@@ -192,6 +227,38 @@
       </div>
 
     </div>
+
+    <!-- ---- Table view (all of this approver's records, Pending flagged) ---- -->
+    <section id="table-view" class="table-view surface-card hidden" aria-label="All requests">
+      <div class="table-toolbar">
+        <div class="table-title-wrap">
+          <h2 class="table-title">All Requests</h2>
+          <span id="table-summary" class="table-summary">&nbsp;</span>
+        </div>
+        <div id="table-filter" class="segmented" role="tablist" aria-label="Filter by status">
+          <button type="button" class="segmented-btn active" data-status="All">All</button>
+          <button type="button" class="segmented-btn" data-status="Pending">Pending</button>
+          <button type="button" class="segmented-btn" data-status="Approved">Approved</button>
+          <button type="button" class="segmented-btn" data-status="Rejected">Rejected</button>
+        </div>
+      </div>
+      <div class="table-scroll">
+        <table class="apple-table">
+          <thead>
+            <tr>
+              <th>Request ID</th>
+              <th class="col-module">Module</th>
+              <th>Title</th>
+              <th class="col-requester">Requester</th>
+              <th class="col-created">Created</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="table-body"></tbody>
+        </table>
+        <div id="table-empty" class="table-empty hidden">No requests to show.</div>
+      </div>
+    </section>
   </div>
 
   <!-- ============================== LIGHTBOX ============================== -->

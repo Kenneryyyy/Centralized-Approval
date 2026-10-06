@@ -664,7 +664,48 @@ function authenticateWithIdToken(idToken) {
     return { authorized: false, reason: 'Your Google email address is not verified.' };
   }
 
-  const auth = resolveManagerAuth_(info.email);
+  return startTokenSession_(info.email);
+}
+
+/**
+ * "Switch Google Account" path. The client opens Google's account chooser
+ * (GIS token client, prompt=select_account) and sends back the access token
+ * for whichever account was picked. We verify it was issued to THIS app's
+ * OAuth client, read the verified email from it, and start a token session
+ * for that account exactly like authenticateWithIdToken does.
+ */
+function authenticateWithAccessToken(accessToken) {
+  const clientId = getOAuthClientId();
+  if (!clientId) {
+    return { authorized: false, reason: 'Google Sign-In is not configured for this app.' };
+  }
+  if (!accessToken) {
+    return { authorized: false, reason: 'Missing sign-in token.' };
+  }
+
+  const url = 'https://oauth2.googleapis.com/tokeninfo?access_token=' + encodeURIComponent(accessToken);
+  const response = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
+  if (response.getResponseCode() !== 200) {
+    return { authorized: false, reason: 'Could not verify your Google sign-in. Please try again.' };
+  }
+
+  const info = JSON.parse(response.getContentText());
+  if (info.aud !== clientId && info.azp !== clientId) {
+    return { authorized: false, reason: 'This sign-in token was not issued for this app.' };
+  }
+  if (!info.email) {
+    return { authorized: false, reason: 'Google did not share an email address for this account.' };
+  }
+  if (info.email_verified !== 'true' && info.email_verified !== true) {
+    return { authorized: false, reason: 'Your Google email address is not verified.' };
+  }
+
+  return startTokenSession_(info.email);
+}
+
+/** Shared by both token sign-in paths: manager check + cached session token. */
+function startTokenSession_(email) {
+  const auth = resolveManagerAuth_(email);
   if (!auth.authorized) return auth;
 
   const sessionToken = Utilities.getUuid();

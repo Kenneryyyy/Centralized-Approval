@@ -870,6 +870,185 @@
   }
 
   /* ==========================================================================
+     APPLE-INSPIRED LAYER
+     Neutral monochrome palette, 12-16px radii, soft layered shadows, frosted
+     glass (backdrop-filter) on the top bar, popovers and sign-in card, and
+     the system font stack. Placed after the base rules so it overrides
+     them without touching the component markup above.
+  ========================================================================== */
+  :root {
+    --bg: #f5f5f7;
+    --surface: #ffffff;
+    --surface-glass: rgba(255, 255, 255, 0.72);
+    --border: rgba(0, 0, 0, 0.07);
+    --border-strong: rgba(0, 0, 0, 0.14);
+
+    --text-primary: #1d1d1f;
+    --text-secondary: #6e6e73;
+    --text-tertiary: #86868b;
+
+    --accent: #0071e3;
+    --accent-dark: #1d1d1f;
+    --accent-soft: rgba(0, 113, 227, 0.08);
+    --accent-soft-strong: rgba(0, 113, 227, 0.14);
+
+    --hover: rgba(0, 0, 0, 0.045);
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04), 0 1px 1px rgba(0, 0, 0, 0.02);
+    --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.06), 0 1px 3px rgba(0, 0, 0, 0.04);
+    --shadow-lg: 0 18px 48px rgba(0, 0, 0, 0.12), 0 2px 8px rgba(0, 0, 0, 0.05);
+
+    --radius-lg: 16px;
+    --radius-md: 12px;
+    --radius-sm: 10px;
+
+    --glass-blur: saturate(180%) blur(20px);
+  }
+
+  html, body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    letter-spacing: -0.005em;
+  }
+
+  .surface-card { border-color: var(--border); box-shadow: var(--shadow-md); }
+
+  /* ---- Glass top bar ---- */
+  .topbar {
+    background: var(--surface-glass);
+    -webkit-backdrop-filter: var(--glass-blur);
+    backdrop-filter: var(--glass-blur);
+    border: 1px solid rgba(255, 255, 255, 0.6);
+    box-shadow: var(--shadow-md);
+    position: relative;
+    z-index: 40;
+  }
+  .brand-title { font-weight: 650; letter-spacing: -0.02em; }
+
+  .popover {
+    background: rgba(255, 255, 255, 0.92);
+    -webkit-backdrop-filter: var(--glass-blur);
+    backdrop-filter: var(--glass-blur);
+    border-radius: var(--radius-md);
+  }
+
+  /* ---- Segmented controls (view switch + table status filter) ---- */
+  .segmented {
+    display: inline-flex; align-items: center; gap: 2px;
+    padding: 3px; border-radius: 10px;
+    background: rgba(118, 118, 128, 0.12);
+    flex-shrink: 0;
+  }
+  .segmented-btn {
+    border: none; background: transparent; color: var(--text-secondary);
+    font-size: 12.5px; font-weight: 600; padding: 5px 14px; border-radius: 8px;
+    transition: background 0.2s var(--ease), color 0.2s var(--ease), box-shadow 0.2s var(--ease);
+  }
+  .segmented-btn:hover { color: var(--text-primary); }
+  .segmented-btn.active {
+    background: var(--surface); color: var(--text-primary);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 1px rgba(0, 0, 0, 0.04);
+  }
+  .view-switch { margin: 0 auto; }
+
+  /* ---- Profile menu ---- */
+  .profile-menu { width: 260px; padding: 6px; }
+  .profile-menu-name { font-size: 14px; font-weight: 650; color: var(--text-primary); margin-bottom: 2px; }
+  .profile-menu-digest {
+    margin: 0 4px 6px; padding: 8px 10px; border-radius: var(--radius-sm);
+    background: rgba(118, 118, 128, 0.08);
+    font-size: 11.5px; line-height: 1.45; color: var(--text-secondary); word-break: break-word;
+  }
+  .menu-item { font-weight: 550; border-radius: 8px; }
+  .menu-item-neutral { color: var(--text-primary); }
+  .menu-item-neutral:hover { background: var(--hover); }
+
+  /* ---- Low-profile Log out pill ---- */
+  .logout-pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 30px; padding: 0 12px 0 10px; margin-left: 6px;
+    border: 1px solid var(--border); border-radius: 999px;
+    background: rgba(118, 118, 128, 0.08); color: var(--text-secondary);
+    font-size: 12.5px; font-weight: 600;
+    transition: background 0.2s var(--ease), color 0.2s var(--ease), border-color 0.2s var(--ease), transform 0.2s var(--ease);
+  }
+  .logout-pill svg { width: 14px; height: 14px; }
+  .logout-pill:hover { background: rgba(118, 118, 128, 0.16); color: var(--text-primary); border-color: var(--border-strong); }
+  .logout-pill:active { transform: scale(0.97); }
+
+  /* ---- Sign-in card ---- */
+  .auth-gate { background: radial-gradient(1200px 600px at 50% -10%, #ffffff 0%, var(--bg) 60%); }
+  .auth-card {
+    background: var(--surface-glass);
+    -webkit-backdrop-filter: var(--glass-blur);
+    backdrop-filter: var(--glass-blur);
+    border: 1px solid rgba(255, 255, 255, 0.7);
+    border-radius: 20px;
+  }
+  .auth-retry-btn { background: var(--text-primary); font-weight: 600; }
+
+  /* ---- Table view ---- */
+  .table-view { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+  .table-toolbar {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+    padding: 16px 20px 12px;
+  }
+  .table-title-wrap { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+  .table-title { margin: 0; font-size: 19px; font-weight: 650; letter-spacing: -0.02em; }
+  .table-summary { font-size: 12.5px; color: var(--text-tertiary); font-weight: 500; }
+  .table-scroll { flex: 1; min-height: 0; overflow: auto; -webkit-overflow-scrolling: touch; padding: 0 12px 12px; }
+
+  .apple-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13.5px; }
+  .apple-table thead th {
+    position: sticky; top: 0; z-index: 1;
+    background: rgba(255, 255, 255, 0.85);
+    -webkit-backdrop-filter: var(--glass-blur);
+    backdrop-filter: var(--glass-blur);
+    text-align: left; font-size: 11.5px; font-weight: 600; color: var(--text-tertiary);
+    text-transform: uppercase; letter-spacing: 0.04em;
+    padding: 10px 12px; border-bottom: 1px solid var(--border);
+  }
+  .apple-table tbody td {
+    padding: 12px; border-bottom: 1px solid var(--border);
+    color: var(--text-primary); vertical-align: middle;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 320px;
+  }
+  .apple-table tbody tr { cursor: pointer; transition: background 0.15s var(--ease); }
+  .apple-table tbody tr:hover td { background: var(--hover); }
+  .apple-table tbody tr:last-child td { border-bottom: none; }
+  .apple-table tbody tr td:first-child { border-radius: 10px 0 0 10px; }
+  .apple-table tbody tr td:last-child { border-radius: 0 10px 10px 0; }
+  .apple-table .cell-id { font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace; font-size: 12.5px; color: var(--text-secondary); }
+  .apple-table .cell-title { font-weight: 550; }
+  .apple-table .col-created { color: var(--text-secondary); }
+
+  /* Pending rows: amber dot before the ID + faint tint, so they read at a glance. */
+  .apple-table tr.is-pending td { background: rgba(217, 119, 6, 0.045); }
+  .apple-table tr.is-pending:hover td { background: rgba(217, 119, 6, 0.09); }
+  .apple-table tr.is-pending .cell-id::before {
+    content: ''; display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+    background: var(--amber); margin-right: 8px; vertical-align: middle;
+  }
+  .table-empty { padding: 48px 16px; text-align: center; font-size: 13.5px; color: var(--text-tertiary); }
+
+  @media (max-width: 860px) {
+    .logout-pill { padding: 0 8px; margin-left: 2px; }
+    .logout-pill span { display: none; }
+    .segmented-btn { padding: 5px 10px; }
+    .apple-table .col-module, .apple-table .col-requester, .apple-table .col-created { display: none; }
+    .apple-table thead th { padding: 10px 8px; }
+    .apple-table tbody td { padding: 10px 8px; max-width: 120px; }
+    .apple-table .cell-id { font-size: 11.5px; }
+    .table-scroll { padding: 0 6px 8px; }
+    .table-toolbar { padding: 12px 12px 8px; }
+  }
+  @media (max-width: 420px) {
+    .brand-text { display: none; }
+  }
+
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .topbar, .auth-card, .popover { background: var(--surface); }
+  }
+
+  /* ==========================================================================
      ACCESSIBILITY
   ========================================================================== */
   :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

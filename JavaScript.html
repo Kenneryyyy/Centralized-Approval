@@ -56,8 +56,18 @@
     // decision has been submitted for that uid.
     pendingAttachment: null,
     fileInputEl: null,
-    fileInputTargetUid: null
+    fileInputTargetUid: null,
+
+    // 'inbox' (sidebar + detail) or 'table' (all records, Pending flagged).
+    activeView: 'inbox',
+    tableStatusFilter: 'All',
+
+    // Access token from the "Switch Google Account" chooser, revoked on sign-out.
+    oauthAccessToken: null,
+    oauthTokenClient: null
   };
+
+  const VIEW_STORAGE_KEY = 'approvalDashboard.view';
 
   const el = {
     authGate: document.getElementById('auth-gate'),
@@ -87,6 +97,20 @@
     profileAvatar: document.getElementById('profile-avatar'),
     profileName: document.getElementById('profile-name'),
     profileRole: document.getElementById('profile-role'),
+    profileMenu: document.getElementById('profile-menu'),
+    profileMenuName: document.getElementById('profile-menu-name'),
+    profileMenuEmail: document.getElementById('profile-menu-email'),
+    profileMenuDigest: document.getElementById('profile-menu-digest'),
+    switchAccountBtn: document.getElementById('switch-account-btn'),
+    menuSignOutBtn: document.getElementById('menu-signout-btn'),
+    logoutBtn: document.getElementById('logout-btn'),
+
+    viewSwitch: document.getElementById('view-switch'),
+    tableView: document.getElementById('table-view'),
+    tableBody: document.getElementById('table-body'),
+    tableEmpty: document.getElementById('table-empty'),
+    tableFilter: document.getElementById('table-filter'),
+    tableSummary: document.getElementById('table-summary'),
 
     sidebarCount: document.getElementById('sidebar-count'),
     filterPills: document.getElementById('filter-pills'),
@@ -116,6 +140,8 @@
     createHiddenFileInput();
     bindGlobalEvents();
     bindLinksPopover();
+    bindProfileMenu();
+    bindViewSwitch();
     renderSidebarSkeleton();
     checkSession();
   }
@@ -183,7 +209,9 @@
 
     el.authGate.classList.add('hidden');
     el.appShell.classList.remove('hidden');
+    setView(readSavedView());
 
+    bindDailyDigest();
     loadQuickLinks();
     loadApprovalData({ initial: true, forceRefresh: true });
     startPolling();
@@ -194,6 +222,7 @@
   // ==========================================================================
     function renderAuthOptions(opts) {
     opts = opts || {};
+    el.authSpinner.classList.add('hidden');
     el.authSignInWrap.classList.remove('hidden');
     el.authSignInWrap.innerHTML = '';
 
@@ -377,6 +406,7 @@
     state.requests = merged;
     buildFilterPills();
     applyFilters();
+    renderTableView();
 
     if (!opts.initial && isNewData) {
       showToast('info', 'New requests have arrived');
@@ -1362,12 +1392,123 @@
   }
 
   // ==========================================================================
+  // VIEW SWITCH + TABLE VIEW
+  // ==========================================================================
+  function bindViewSwitch() {
+    el.viewSwitch.addEventListener('click', function (e) {
+      const btn = e.target.closest('[data-view]');
+      if (btn) setView(btn.dataset.view, true);
+    });
+    el.tableFilter.addEventListener('click', function (e) {
+      const btn = e.target.closest('[data-status]');
+      if (!btn) return;
+      state.tableStatusFilter = btn.dataset.status;
+      setActiveSegment(el.tableFilter, 'status', state.tableStatusFilter);
+      renderTableView();
+    });
+  }
+
+  function readSavedView() {
+    try { return localStorage.getItem(VIEW_STORAGE_KEY) === 'table' ? 'table' : 'inbox'; } catch (e) { return 'inbox'; }
+  }
+
+  function setView(view, remember) {
+    state.activeView = view === 'table' ? 'table' : 'inbox';
+    const isTable = state.activeView === 'table';
+    el.appBody.classList.toggle('hidden', isTable);
+    el.tableView.classList.toggle('hidden', !isTable);
+    setActiveSegment(el.viewSwitch, 'view', state.activeView);
+    if (isTable) {
+      el.appShell.classList.remove('detail-open');
+      renderTableView();
+    }
+    if (remember) {
+      try { localStorage.setItem(VIEW_STORAGE_KEY, state.activeView); } catch (e) {}
+    }
+  }
+
+  function setActiveSegment(container, dataKey, value) {
+    Array.from(container.querySelectorAll('.segmented-btn')).forEach(function (b) {
+      const on = b.dataset[dataKey] === value;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+  }
+
+  function isPendingStatus(r) { return (r.Status || '').toLowerCase() === 'pending'; }
+
+  function renderTableView() {
+    if (!el.tableBody) return;
+    const pendingCount = state.requests.filter(isPendingStatus).length;
+    el.tableSummary.textContent = state.requests.length + ' total · ' + pendingCount + ' pending';
+
+    const filter = state.tableStatusFilter;
+    const rows = state.requests
+      .filter(function (r) { return filter === 'All' || (r.Status || '').toLowerCase() === filter.toLowerCase(); })
+      .slice()
+      // Pending first; within each group keep the server's newest-first order.
+      .sort(function (a, b) { return (isPendingStatus(b) ? 1 : 0) - (isPendingStatus(a) ? 1 : 0); });
+
+    el.tableEmpty.textContent = state.sidebarLoaded ? 'No requests to show.' : 'Loading…';
+    el.tableEmpty.classList.toggle('hidden', rows.length > 0);
+    el.tableBody.innerHTML = rows.map(function (r) {
+      return '<tr class="' + (isPendingStatus(r) ? 'is-pending' : '') + '" data-uid="' + escapeAttr(r.uid) + '" tabindex="0">' +
+        '<td class="cell-id">' + escapeHtml(r.RequestID) + '</td>' +
+        '<td class="col-module">' + escapeHtml(moduleLabelFor(r.AppSource)) + '</td>' +
+        '<td class="cell-title">' + escapeHtml(r.Title) + '</td>' +
+        '<td class="col-requester">' + escapeHtml(r.RequesterName) + '</td>' +
+        '<td class="col-created" title="' + escapeAttr(formatDateTime(r.CreatedAt)) + '">' + relativeTime(r.CreatedAt) + '</td>' +
+        '<td>' + statusPillHtml(r.Status) + '</td>' +
+      '</tr>';
+    }).join('');
+
+    Array.from(el.tableBody.querySelectorAll('tr')).forEach(function (tr) {
+      const open = function () { setView('inbox', true); selectItem(tr.dataset.uid); };
+      tr.addEventListener('click', open);
+      tr.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
+    });
+  }
+
+  // ==========================================================================
   // PROFILE + SIGN OUT
   // ==========================================================================
   function renderProfile(auth) {
     el.profileName.textContent = auth.name;
     el.profileRole.textContent = auth.role + (auth.department ? ' · ' + auth.department : '');
     el.profileAvatar.textContent = initials(auth.name);
+    el.profileMenuName.textContent = auth.name;
+    el.profileMenuEmail.textContent = auth.email;
+  }
+
+  function bindProfileMenu() {
+    el.profileChip.addEventListener('click', function (e) {
+      e.stopPropagation();
+      el.notifPopover.classList.add('hidden');
+      el.linksPopover.classList.add('hidden');
+      toggleProfileMenu();
+    });
+    el.switchAccountBtn.addEventListener('click', handleSwitchAccount);
+    el.menuSignOutBtn.addEventListener('click', handleSignOut);
+    el.logoutBtn.addEventListener('click', handleSignOut);
+  }
+
+  // Binds the signed-in Google account as this user's aprEmail for the daily
+  // Pending digest (see bindReminderRecipient / runAprEmailDigest).
+  function bindDailyDigest() {
+    el.profileMenuDigest.textContent = 'Setting up daily reminders…';
+    const tokenAtCall = state.sessionToken;
+    google.script.run
+      .withSuccessHandler(function (info) {
+        if (state.sessionToken !== tokenAtCall || !info) return;
+        const hour = info.hour % 12 || 12;
+        el.profileMenuDigest.textContent =
+          'Daily Pending reminder at ' + hour + (info.hour < 12 ? ' AM' : ' PM') + ' to ' + info.aprEmail;
+      })
+      .withFailureHandler(function () {
+        if (state.sessionToken !== tokenAtCall) return;
+        el.profileMenuDigest.textContent = 'Daily reminders could not be set up.';
+      })
+      .bindReminderRecipient(state.sessionToken);
   }
 
     function toggleProfileMenu(force) {
@@ -1379,13 +1520,31 @@
 
   function resetAppForSignedOutState() {
     if (state.pollHandle) { clearInterval(state.pollHandle); state.pollHandle = null; }
+    performCloseDetail();
     state.user = null;
     state.sessionToken = null;
     state.requests = [];
     state.filteredRequests = [];
     state.selectedUid = null;
+    state.sidebarLoaded = false;
+    state.blacklistedUids = new Set();
+    state.lockedStatusByUid = {};
+    state.lastNotifIds = new Set();
+    state.pendingAttachment = null;
+    el.requestStack.innerHTML = '';
+    el.tableBody.innerHTML = '';
+    el.notifList.innerHTML = '';
+    updateNotifBadge(0);
     el.appShell.classList.add('hidden');
     toggleProfileMenu(false);
+  }
+
+  function revokeOAuthAccessToken() {
+    const token = state.oauthAccessToken;
+    state.oauthAccessToken = null;
+    if (token && window.google && google.accounts && google.accounts.oauth2) {
+      try { google.accounts.oauth2.revoke(token, function () {}); } catch (e) {}
+    }
   }
 
   function handleSignOut() {
@@ -1395,6 +1554,7 @@
     if (window.google && window.google.accounts && window.google.accounts.id) {
       try { google.accounts.id.disableAutoSelect(); } catch (e) {}
     }
+    revokeOAuthAccessToken();
 
     google.script.run
       .withSuccessHandler(function () {
@@ -1414,6 +1574,12 @@
       .signOut(tokenToClear);
   }
 
+  // Opens Google's account chooser straight away (GIS token client with
+  // prompt=select_account). The picked account is verified server-side by
+  // authenticateWithAccessToken(), which starts a fresh session for it; the
+  // old session is ended. If the token client isn't available (no OAuth
+  // client ID configured, or the GIS script failed to load), fall back to
+  // the sign-in screen with the Google button.
   function handleSwitchAccount() {
     toggleProfileMenu(false);
 
@@ -1421,14 +1587,50 @@
       try { google.accounts.id.disableAutoSelect(); } catch (e) {}
     }
 
-    // Clear the current session server-side too, then drop straight into
-    // the sign-in screen with the Google account chooser (renderAuthOptions
-    // renders the GIS button fresh, which prompts the person to pick an
-    // account since auto-select has just been disabled).
+    const clientId = el.authCard.dataset.clientId;
+    const hasTokenClient = !!(clientId && window.google && google.accounts && google.accounts.oauth2);
+    if (!hasTokenClient) {
+      google.script.run
+        .withSuccessHandler(finishSwitchAccount)
+        .withFailureHandler(finishSwitchAccount)
+        .signOut(state.sessionToken);
+      return;
+    }
+
+    if (!state.oauthTokenClient) {
+      state.oauthTokenClient = google.accounts.oauth2.initTokenClient({
+        client_id: clientId,
+        scope: 'openid email profile',
+        callback: onSwitchAccountToken,
+        error_callback: function (err) {
+          // Popup closed or blocked: stay signed in as the current account.
+          const blocked = err && err.type === 'popup_failed_to_open';
+          showToast(blocked ? 'error' : 'info', blocked
+            ? 'Popup was blocked. Allow popups for this site to switch accounts.'
+            : 'Account switch cancelled.');
+        }
+      });
+    }
+    state.oauthTokenClient.requestAccessToken({ prompt: 'select_account' });
+  }
+
+  function onSwitchAccountToken(response) {
+    if (!response || response.error || !response.access_token) {
+      showToast('error', 'Account switch failed. Please try again.');
+      return;
+    }
+    const previousToken = state.sessionToken;
+    revokeOAuthAccessToken();
+    state.oauthAccessToken = response.access_token;
+
+    resetAppForSignedOutState();
+    resetAuthGate('Switching account…');
+    if (previousToken) google.script.run.withFailureHandler(function () {}).signOut(previousToken);
+
     google.script.run
-      .withSuccessHandler(finishSwitchAccount)
-      .withFailureHandler(finishSwitchAccount)
-      .signOut(state.sessionToken);
+      .withSuccessHandler(onAuthResolved)
+      .withFailureHandler(function (err) { onAuthResolved({ authorized: false, reason: err.message || String(err) }); })
+      .authenticateWithAccessToken(response.access_token);
   }
 
   function finishSwitchAccount() {
@@ -1455,6 +1657,7 @@
     el.notifBtn.addEventListener('click', function (e) {
       e.stopPropagation();
       el.linksPopover.classList.add('hidden');
+      toggleProfileMenu(false);
       el.notifPopover.classList.toggle('hidden');
       state.notifBadgeSuppressed = true;
       updateNotifBadge(0);
@@ -1465,6 +1668,7 @@
     document.addEventListener('click', function (e) {
       if (!el.notifPopover.contains(e.target) && !el.notifBtn.contains(e.target)) el.notifPopover.classList.add('hidden');
       if (!el.linksPopover.contains(e.target) && !el.linksBtn.contains(e.target)) el.linksPopover.classList.add('hidden');
+      if (!el.profileMenu.contains(e.target) && !el.profileChip.contains(e.target)) toggleProfileMenu(false);
     });
 
     el.lightboxClose.addEventListener('click', closeLightbox);
@@ -1475,6 +1679,7 @@
       if (!el.lightboxOverlay.classList.contains('hidden')) closeLightbox();
       el.notifPopover.classList.add('hidden');
       el.linksPopover.classList.add('hidden');
+      toggleProfileMenu(false);
     });
 
     window.addEventListener('resize', function () {

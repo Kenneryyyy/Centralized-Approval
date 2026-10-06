@@ -13,6 +13,17 @@
  *                                                   approver who has pending items
  *    createDailyReminderTrigger() / createWeeklyReminderTrigger()
  *    deleteReminderTriggers()
+ *
+ *  aprEmail DAILY DIGEST (bound accounts)
+ *    bindReminderRecipient(sessionToken)  -> called by the web app after every
+ *                                            sign-in / "Switch Google Account";
+ *                                            binds that account as an aprEmail
+ *    runAprEmailDigest()                  -> trigger target: emails each bound
+ *                                            aprEmail its Pending items, sent
+ *                                            from APR_DIGEST_CONFIG.SENDER_EMAIL
+ *    createDailyAprEmailDigestTrigger()   -> run ONCE from the editor while
+ *                                            signed in as the sender account
+ *    listAprEmailRecipients() / unbindAprEmailRecipient(email)
  * ============================================================================
  */
 
@@ -23,6 +34,17 @@ const REMINDER_CONFIG = {
   TIMEZONE: 'Asia/Manila',
   MAX_ROWS_IN_EMAIL: 50,          // keeps the email light; remainder is summarized
   TRIGGER_HOUR: 8                 // 8 AM in TIMEZONE
+};
+
+const APR_DIGEST_CONFIG = {
+  // Sender for the aprEmail daily digest. GmailApp can only send "from" this
+  // address when the trigger owner IS this account, or has it as a verified
+  // Gmail "Send mail as" alias — see createDailyAprEmailDigestTrigger().
+  SENDER_EMAIL: 'it.testing@asianshipping.com',
+  // One Script Property per bound account: key = prefix + email, value = ISO
+  // time it was last bound. Per-key storage avoids the 9KB single-value limit
+  // and needs no lock (each sign-in only ever writes its own key).
+  PROPERTY_PREFIX: 'aprDigest:'
 };
 
 // ---------------------------------------------------------------------------
@@ -91,9 +113,11 @@ function lookupApproverName_(email) {
  * @param {string} recipientEmail
  * @param {Object[]} [preFetchedPending] Optional: the full pending list, so a
  *        batch run doesn't re-query AppSheet for every approver.
+ * @param {string} [senderEmail] Optional "from" address; defaults to
+ *        REMINDER_CONFIG.SENDER_EMAIL.
  * @return {{sent:boolean, count:number, reason?:string}}
  */
-function sendScheduledReminderEmail(recipientEmail, preFetchedPending) {
+function sendScheduledReminderEmail(recipientEmail, preFetchedPending, senderEmail) {
   if (!recipientEmail) throw new Error('recipientEmail is required.');
 
   const allPending = preFetchedPending || fetchAllPendingRows_();
@@ -112,10 +136,11 @@ function sendScheduledReminderEmail(recipientEmail, preFetchedPending) {
     htmlBody: html,
     name: REMINDER_CONFIG.SENDER_NAME
   };
-  if (canSendAs_(REMINDER_CONFIG.SENDER_EMAIL)) {
-    mailOptions.from = REMINDER_CONFIG.SENDER_EMAIL;
+  const fromAddress = senderEmail || REMINDER_CONFIG.SENDER_EMAIL;
+  if (canSendAs_(fromAddress)) {
+    mailOptions.from = fromAddress;
   } else {
-    Logger.log('WARNING: "%s" is not a Send-mail-as alias of this account — sending from the default address instead.', REMINDER_CONFIG.SENDER_EMAIL);
+    Logger.log('WARNING: "%s" is not this account or one of its Send-mail-as aliases — sending from %s instead.', fromAddress, Session.getEffectiveUser().getEmail());
   }
 
   GmailApp.sendEmail(
@@ -151,6 +176,82 @@ function runScheduledReminders() {
       Logger.log('Reminder -> %s: %s', email, JSON.stringify(res));
     } catch (err) {
       Logger.log('Reminder FAILED for %s (continuing): %s', email, err.message);
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// aprEmail BINDING + DAILY DIGEST
+// ---------------------------------------------------------------------------
+
+/**
+ * Called by the web app right after any successful sign-in, including
+ * "Switch Google Account". Binds the authenticated Google account (aprEmail)
+ * so runAprEmailDigest() emails it its Pending items every day. Accounts stay
+ * bound across sign-outs; use unbindAprEmailRecipient() to remove one.
+ */
+function bindReminderRecipient(sessionToken) {
+  const auth = resolveAuth_(sessionToken);
+  if (!auth.authorized) throw new Error(auth.reason || 'Unauthorized');
+
+  const aprEmail = auth.email.trim().toLowerCase();
+  PropertiesService.getScriptProperties()
+    .setProperty(APR_DIGEST_CONFIG.PROPERTY_PREFIX + aprEmail, new Date().toISOString());
+
+  return {
+    aprEmail: aprEmail,
+    sender: APR_DIGEST_CONFIG.SENDER_EMAIL,
+    hour: REMINDER_CONFIG.TRIGGER_HOUR,
+    timezone: REMINDER_CONFIG.TIMEZONE
+  };
+}
+
+/** Every bound aprEmail, lowercase. */
+function listAprEmailRecipients() {
+  const props = PropertiesService.getScriptProperties().getProperties();
+  const prefix = APR_DIGEST_CONFIG.PROPERTY_PREFIX;
+  return Object.keys(props)
+    .filter(function (k) { return k.indexOf(prefix) === 0; })
+    .map(function (k) { return k.substring(prefix.length); })
+    .filter(function (e) { return !!e; })
+    .sort();
+}
+
+/** Run manually to stop the daily digest for one account. */
+function unbindAprEmailRecipient(email) {
+  if (!email) throw new Error('email is required.');
+  PropertiesService.getScriptProperties()
+    .deleteProperty(APR_DIGEST_CONFIG.PROPERTY_PREFIX + email.trim().toLowerCase());
+}
+
+/**
+ * Trigger target. Reads the Pending rows ONCE (the same CentralizedApproval
+ * data the Table View shows), then sends each bound aprEmail one consolidated
+ * email of its own Pending items from APR_DIGEST_CONFIG.SENDER_EMAIL.
+ * Accounts with nothing pending get no email; accounts no longer in the
+ * managers table are skipped. One failing recipient never stops the others.
+ */
+function runAprEmailDigest() {
+  const recipients = listAprEmailRecipients();
+  if (!recipients.length) {
+    Logger.log('aprEmail digest: no bound accounts yet — nothing to send.');
+    return;
+  }
+
+  const allPending = fetchAllPendingRows_();
+  Logger.log('aprEmail digest: %s pending request(s), %s bound account(s).', allPending.length, recipients.length);
+  if (!allPending.length) return;
+
+  recipients.forEach(function (email) {
+    try {
+      if (!isUserAuthorized(email)) {
+        Logger.log('aprEmail digest: %s is no longer in managers — skipped.', email);
+        return;
+      }
+      const res = sendScheduledReminderEmail(email, allPending, APR_DIGEST_CONFIG.SENDER_EMAIL);
+      Logger.log('aprEmail digest -> %s: %s', email, JSON.stringify(res));
+    } catch (err) {
+      Logger.log('aprEmail digest FAILED for %s (continuing): %s', email, err.message);
     }
   });
 }
@@ -374,10 +475,36 @@ function buildReminderPlainText_(rows, recipientName) {
 // TRIGGER SETUP — run ONE of these manually, ONCE, from the editor (▶)
 // ---------------------------------------------------------------------------
 
+const REMINDER_TRIGGER_HANDLERS = ['runScheduledReminders', 'runAprEmailDigest'];
+
+/** Removes BOTH reminder styles so only one daily email job ever exists. */
 function deleteReminderTriggers() {
   ScriptApp.getProjectTriggers().forEach(function (t) {
-    if (t.getHandlerFunction() === 'runScheduledReminders') ScriptApp.deleteTrigger(t);
+    if (REMINDER_TRIGGER_HANDLERS.indexOf(t.getHandlerFunction()) !== -1) ScriptApp.deleteTrigger(t);
   });
+}
+
+/**
+ * Every day at TRIGGER_HOUR (default 8 AM Manila): Pending digest to each
+ * bound aprEmail. Replaces any runScheduledReminders trigger.
+ *
+ * Run this ONCE from the editor while signed in as
+ * APR_DIGEST_CONFIG.SENDER_EMAIL (it.testing@asianshipping.com), so the
+ * trigger — and therefore the email — runs as that account. If you run it as
+ * another account, that account must have it.testing@asianshipping.com as a
+ * verified Gmail "Send mail as" alias, otherwise mail goes out from the
+ * trigger owner's own address (a warning is logged).
+ */
+function createDailyAprEmailDigestTrigger() {
+  deleteReminderTriggers();
+  ScriptApp.newTrigger('runAprEmailDigest')
+    .timeBased()
+    .everyDays(1)
+    .atHour(REMINDER_CONFIG.TRIGGER_HOUR)
+    .inTimezone(REMINDER_CONFIG.TIMEZONE)
+    .create();
+  Logger.log('Daily aprEmail digest trigger created (owner: %s, can send as %s: %s).',
+    Session.getEffectiveUser().getEmail(), APR_DIGEST_CONFIG.SENDER_EMAIL, canSendAs_(APR_DIGEST_CONFIG.SENDER_EMAIL));
 }
 
 /** Every day at TRIGGER_HOUR (default 8 AM Manila). */
@@ -411,6 +538,12 @@ function createWeeklyReminderTrigger() {
 /** Replace with your own address, then ▶ run. Sends only if you have pending items. */
 function testSendScheduledReminderEmail() {
   Logger.log(JSON.stringify(sendScheduledReminderEmail('kennery.villacaol@ravago.com.ph')));
+}
+
+/** Sends today's digest right now (same as the trigger) — check the log for results. */
+function testRunAprEmailDigest() {
+  Logger.log('Bound aprEmail accounts: ' + JSON.stringify(listAprEmailRecipients()));
+  runAprEmailDigest();
 }
 
 /** Verifies the JSON parser against good, empty, and malformed input — no email sent. */
